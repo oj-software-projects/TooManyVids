@@ -213,6 +213,7 @@ class VideoGridPlayer {
 
     video.addEventListener('playing', () => {
       loading.style.display = 'none';
+      this.detectBlackFrame(player, video, cell, titleEl, infoEl, loading);
     });
 
     video.addEventListener('ended', () => {
@@ -662,6 +663,7 @@ class VideoGridPlayer {
 
     player.rotation = 0;
     player.usingTranscode = false;
+    player._blackCheckDone = false;
     video.style.transform = '';
 
     player.videoUrl = url;
@@ -746,6 +748,46 @@ class VideoGridPlayer {
     window.toomanyvids.error('Error dialog shown', { message });
     this.errorMessage.textContent = message;
     this.errorModal.classList.add('visible');
+  }
+
+  detectBlackFrame(player, video, cell, titleEl, infoEl, loading) {
+    if (player.usingTranscode || !player.transcodeUrl) return;
+    if (player._blackCheckDone) return;
+    player._blackCheckDone = true;
+
+    const checkDelay = 1500;
+    const checkAfterPlay = setTimeout(() => {
+      try {
+        if (video.paused || video.ended) return;
+        const canvas = document.createElement('canvas');
+        canvas.width = 4;
+        canvas.height = 4;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, 4, 4);
+        const data = ctx.getImageData(0, 0, 4, 4).data;
+        let nonBlack = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i] > 5 || data[i + 1] > 5 || data[i + 2] > 5) {
+            nonBlack++;
+          }
+        }
+        if (nonBlack === 0) {
+          window.toomanyvids.warn('Black frame detected, retrying transcode', { index: player.index, path: player.videoPath });
+          player.usingTranscode = true;
+          const wasMuted = video.muted;
+          const wasLoop = video.loop;
+          video.src = player.transcodeUrl;
+          video.muted = wasMuted;
+          video.loop = wasLoop;
+          loading.style.display = 'block';
+          video.play().catch(() => {
+            loading.style.display = 'none';
+          });
+        }
+      } catch (_) {}
+    }, checkDelay);
+
+    video.addEventListener('pause', () => { clearTimeout(checkAfterPlay); }, { once: true });
   }
 
   showToast(message) {
