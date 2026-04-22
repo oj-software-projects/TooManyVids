@@ -137,13 +137,12 @@ class VideoGridPlayer {
 
     video.addEventListener('error', () => {
       loading.style.display = 'none';
-      const title = titleEl.textContent || 'Video';
-      const ext = player.videoUrl ? player.videoUrl.split('.').pop().split('?')[0].toLowerCase() : '';
+      const ext = player.videoPath ? player.videoPath.split('.').pop().toLowerCase() : '';
       const unsupported = ['mkv', 'avi', 'flv', 'wmv', 'hevc', 'h265'];
       if (unsupported.includes(ext)) {
-        titleEl.textContent = 'Unsupported format: ' + ext.toUpperCase();
+        titleEl.textContent = 'Codec? : .' + ext.toUpperCase();
       } else {
-        titleEl.textContent = 'Click to play: ' + title;
+        titleEl.textContent = 'Click to play: ' + (titleEl.textContent || 'Video');
       }
       titleEl.style.opacity = '1';
       infoEl.style.opacity = '1';
@@ -358,14 +357,26 @@ class VideoGridPlayer {
     titleEl.textContent = player.element.querySelector('.cell-title').textContent;
     infoEl.textContent = player.element.querySelector('.cell-info').textContent;
 
-    fullscreenVideo.onloadeddata = () => {
+    fullscreenVideo.oncanplay = () => {
       fullscreenVideo.currentTime = savedTime;
       fullscreenVideo.play().catch(() => {});
-      fullscreenVideo.onloadeddata = null;
+      fullscreenVideo.oncanplay = null;
     };
 
-    fullscreenVideo.src = player.video.src;
+    fullscreenVideo.onerror = () => {
+      fullscreenVideo.oncanplay = null;
+    };
+
+    fullscreenVideo.src = player.videoUrl || player.video.src;
     fullscreenContainer.style.display = 'flex';
+
+    setTimeout(() => {
+      if (fullscreenVideo.readyState >= 3) {
+        fullscreenVideo.currentTime = savedTime;
+        fullscreenVideo.play().catch(() => {});
+        fullscreenVideo.oncanplay = null;
+      }
+    }, 2000);
   }
 
   exitFullscreen() {
@@ -426,12 +437,13 @@ class VideoGridPlayer {
     const infoEl = cell.querySelector('.cell-info');
 
     const { url, path: filePath, size } = videoData;
-    const filename = decodeURIComponent(url.split('/').pop().split('?')[0]);
-    const title = filename.replace(/\.[^/.]+$/, '');
+    const title = filePath.split(/[/\\]/).pop().replace(/\.[^/.]+$/, '');
     const sizeStr = this.formatFileSize(size);
 
     titleEl.textContent = title;
-    infoEl.textContent = `${filePath} • ${sizeStr}`;
+    titleEl.title = title;
+    infoEl.textContent = sizeStr;
+    infoEl.title = filePath;
     loading.style.display = 'block';
     titleEl.style.opacity = '0';
     infoEl.style.opacity = '0';
