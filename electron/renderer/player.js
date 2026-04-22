@@ -45,6 +45,28 @@ class VideoGridPlayer {
     document.getElementById('btn-reshuffle').addEventListener('click', () => this.reshuffle());
     document.getElementById('btn-pause').addEventListener('click', () => this.togglePause());
     document.getElementById('btn-mute').addEventListener('click', () => this.toggleMute());
+
+    // Handle window resize - force video elements to resize
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        this.handleResize();
+      }, 100);
+    });
+  }
+
+  handleResize() {
+    // Force videos to recalculate their dimensions
+    this.players.forEach(player => {
+      const video = player.video;
+      if (video && !video.paused) {
+        // Trigger resize by briefly pausing and resuming
+        const currentTime = video.currentTime;
+        video.currentTime = currentTime;
+      }
+    });
+    this.updateStatus();
   }
 
   setupIpcListeners() {
