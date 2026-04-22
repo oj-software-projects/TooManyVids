@@ -7,6 +7,7 @@ const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const { spawn } = require('child_process');
 const { parseArgs } = require('../src/cli/parseArgs');
 const { scanDirectories } = require('../src/files/scanDirectories');
 const { getLogger } = require('../src/logger');
@@ -20,7 +21,22 @@ app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('num-raster-threads', '4');
 
-log.info('App starting', { platform: process.platform, arch: process.arch, electronVersion: process.versions.electron });
+let ffmpegAvailable = false;
+try {
+  const result = require('child_process').spawnSync('ffmpeg', ['-version'], { timeout: 3000 });
+  ffmpegAvailable = result.status === 0;
+  if (ffmpegAvailable) {
+    log.info('ffmpeg detected on system');
+  } else {
+    log.warn('ffmpeg not found - transcoding disabled');
+  }
+} catch (_) {
+  log.warn('ffmpeg not available - transcoding disabled');
+}
+
+const REMUX_EXTENSIONS = new Set(['.m4v', '.mov', '.mkv', '.avi', '.flv', '.wmv', '.mpg', '.mpeg', '.3gp']);
+
+log.info('App starting', { platform: process.platform, arch: process.arch, electronVersion: process.versions.electron, ffmpegAvailable });
 
 let mainWindow = null;
 let config = null;
@@ -45,10 +61,105 @@ const MIME_TYPES = {
   '.ogv': 'video/ogg'
 };
 
+const TRANSCODE_MIME = 'video/mp4';
+
+function serveDirect(filePath, range, res) {
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeType = MIME_TYPES[ext] || 'application/octet-stream';
+
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Range');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    const MAX_CHUNK = 2 * 1024 * 1024;
+    if (end - start + 1 > MAX_CHUNK) {
+      end = start + MAX_CHUNK - 1;
+    }
+    const chunkSize = end - start + 1;
+
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunkSize,
+      'Content-Type': mimeType
+    });
+
+    fs.createReadStream(filePath, { start, end }).pipe(res);
+  } else {
+    const MAX_INITIAL = 2 * 1024 * 1024;
+    const end = Math.min(MAX_INITIAL, fileSize) - 1;
+    const chunkSize = end + 1;
+
+    res.writeHead(206, {
+      'Content-Range': `bytes 0-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunkSize,
+      'Content-Type': mimeType
+    });
+
+    fs.createReadStream(filePath, { start: 0, end }).pipe(res);
+  }
+}
+
+function serveTranscoded(filePath, res, remux) {
+  const args = remux
+    ? ['-i', filePath, '-c', 'copy', '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov', '-']
+    : ['-i', filePath, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+       '-c:a', 'aac', '-b:a', '128k', '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov', '-'];
+
+  log.info('Transcoding via ffmpeg', { filePath, remux, cmd: args.join(' ') });
+
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Content-Type', TRANSCODE_MIME);
+  res.setHeader('Cache-Control', 'no-cache');
+
+  const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  proc.stdout.pipe(res);
+
+  let stderrBuf = '';
+  proc.stderr.on('data', (data) => {
+    stderrBuf += data.toString();
+    if (stderrBuf.length > 4096) {
+      stderrBuf = stderrBuf.slice(-2048);
+    }
+  });
+
+  proc.on('error', (err) => {
+    log.error('ffmpeg spawn error', { filePath, error: err.message });
+    if (!res.headersSent) {
+      res.writeHead(500);
+      res.end('ffmpeg error: ' + err.message);
+    } else {
+      res.end();
+    }
+  });
+
+  proc.on('close', (code) => {
+    if (code !== 0 && code !== 255) {
+      log.error('ffmpeg exited with error', { filePath, code, stderr: stderrBuf.slice(-500) });
+    }
+    if (!res.writableEnded) {
+      res.end();
+    }
+  });
+
+  res.on('close', () => {
+    proc.kill('SIGKILL');
+  });
+}
+
 function startHttpServer() {
   httpServer = http.createServer((req, res) => {
     const url = new URL(req.url, `http://localhost:${HTTP_PORT}`);
     const videoId = url.searchParams.get('id');
+    const transcode = url.searchParams.get('transcode') === '1';
 
     if (!videoId || !videoPathMap.has(videoId)) {
       log.warn('HTTP 404 - unknown video id', { videoId, url: req.url });
@@ -59,57 +170,22 @@ function startHttpServer() {
 
     const filePath = videoPathMap.get(videoId);
     const ext = path.extname(filePath).toLowerCase();
-    const mimeType = MIME_TYPES[ext] || 'application/octet-stream';
+    const needsRemux = REMUX_EXTENSIONS.has(ext);
 
     try {
-      const stat = fs.statSync(filePath);
-      const fileSize = stat.size;
-      const range = req.headers.range;
-
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Headers', 'Range');
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
-
-      if (range) {
-        const parts = range.replace(/bytes=/, '').split('-');
-        const start = parseInt(parts[0], 10);
-        let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-        const MAX_CHUNK = 2 * 1024 * 1024;
-        if (end - start + 1 > MAX_CHUNK) {
-          end = start + MAX_CHUNK - 1;
-        }
-        const chunkSize = end - start + 1;
-
-        log.debug('HTTP range request', { videoId, start, end, chunkSize, mimeType });
-
-        res.writeHead(206, {
-          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': chunkSize,
-          'Content-Type': mimeType
-        });
-
-        fs.createReadStream(filePath, { start, end }).pipe(res);
+      if (ffmpegAvailable && (transcode || needsRemux)) {
+        log.info('Serving via ffmpeg', { videoId, ext, transcode, remux: needsRemux && !transcode });
+        serveTranscoded(filePath, res, needsRemux && !transcode);
       } else {
-        const MAX_INITIAL = 2 * 1024 * 1024;
-        const end = Math.min(MAX_INITIAL, fileSize) - 1;
-        const chunkSize = end + 1;
-
-        log.debug('HTTP initial request', { videoId, chunkSize, fileSize, mimeType });
-
-        res.writeHead(206, {
-          'Content-Range': `bytes 0-${end}/${fileSize}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': chunkSize,
-          'Content-Type': mimeType
-        });
-
-        fs.createReadStream(filePath, { start: 0, end }).pipe(res);
+        log.debug('Serving direct', { videoId, ext });
+        serveDirect(filePath, req.headers.range, res);
       }
     } catch (err) {
       log.error('HTTP serve error', { videoId, filePath, error: err.message });
-      res.writeHead(404);
-      res.end('File not found');
+      if (!res.headersSent) {
+        res.writeHead(500);
+        res.end('Server error');
+      }
     }
   });
 
@@ -196,14 +272,21 @@ async function createWindow() {
         log.warn('Cannot stat video file', { path: videoPath, error: err.message });
       }
 
+      const ext = path.extname(videoPath).toLowerCase();
+      const needsRemux = REMUX_EXTENSIONS.has(ext);
+      const baseUrl = `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`;
+
       return {
-        url: `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`,
+        url: baseUrl,
+        transcodeUrl: ffmpegAvailable && needsRemux ? baseUrl + '&transcode=1' : null,
         path: videoPath,
-        size: fileSize
+        size: fileSize,
+        ext,
+        needsRemux
       };
     });
 
-    log.info('Sending config to renderer', { cellCount, videoCount: videoData.length });
+    log.info('Sending config to renderer', { cellCount, videoCount: videoData.length, ffmpegAvailable });
 
     mainWindow.webContents.send('config', {
       grid: config.grid,
@@ -211,7 +294,8 @@ async function createWindow() {
       loop: config.loop,
       mute: config.mute,
       screenWidth,
-      screenHeight
+      screenHeight,
+      ffmpegAvailable
     });
   });
 
@@ -260,10 +344,17 @@ function handleReshuffle() {
       fileSize = stat.size;
     } catch (err) {}
 
+    const ext = path.extname(videoPath).toLowerCase();
+    const needsRemux = REMUX_EXTENSIONS.has(ext);
+    const baseUrl = `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`;
+
     return {
-      url: `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`,
+      url: baseUrl,
+      transcodeUrl: ffmpegAvailable && needsRemux ? baseUrl + '&transcode=1' : null,
       path: videoPath,
-      size: fileSize
+      size: fileSize,
+      ext,
+      needsRemux
     };
   });
 

@@ -101,7 +101,11 @@ class VideoGridPlayer {
         element: cell,
         video: cell.querySelector('video'),
         index: i,
-        videoUrl: null
+        videoUrl: null,
+        videoPath: null,
+        videoExt: null,
+        transcodeUrl: null,
+        usingTranscode: false
       });
     }
 
@@ -151,16 +155,33 @@ class VideoGridPlayer {
 
     video.addEventListener('error', () => {
       loading.style.display = 'none';
-      const ext = player.videoPath ? player.videoPath.split('.').pop().toLowerCase() : '';
-      const unsupported = ['mkv', 'avi', 'flv', 'wmv', 'hevc', 'h265'];
+      const ext = player.videoExt || '';
       const videoError = video.error;
       const errCode = videoError ? videoError.code : 'unknown';
       const errMsg = videoError ? videoError.message : 'unknown';
       window.toomanyvids.error('Video error', { index, ext, errCode, errMsg, src: player.videoUrl });
+
+      if (player.transcodeUrl && !player.usingTranscode) {
+        window.toomanyvids.info('Retrying with transcode', { index, path: player.videoPath });
+        player.usingTranscode = true;
+        video.src = player.transcodeUrl;
+        loading.style.display = 'block';
+        video.play().then(() => {
+          window.toomanyvids.info('Transcode playback started', { index });
+        }).catch(() => {
+          loading.style.display = 'none';
+          titleEl.textContent = 'Cannot play: .' + ext.toUpperCase();
+          titleEl.style.opacity = '1';
+          infoEl.style.opacity = '1';
+        });
+        return;
+      }
+
+      const unsupported = ['mkv', 'avi', 'flv', 'wmv', 'hevc', 'h265'];
       if (unsupported.includes(ext)) {
         titleEl.textContent = 'Codec? : .' + ext.toUpperCase();
       } else {
-        titleEl.textContent = 'Click to play: ' + (titleEl.textContent || 'Video');
+        titleEl.textContent = 'Error: .' + ext.toUpperCase() + ' (code ' + errCode + ')';
       }
       titleEl.style.opacity = '1';
       infoEl.style.opacity = '1';
@@ -528,7 +549,7 @@ class VideoGridPlayer {
     const titleEl = cell.querySelector('.cell-title');
     const infoEl = cell.querySelector('.cell-info');
 
-    const { url, path: filePath, size } = videoData;
+    const { url, path: filePath, size, transcodeUrl, ext, needsRemux } = videoData;
     const title = filePath.split(/[/\\]/).pop().replace(/\.[^/.]+$/, '');
     const sizeStr = this.formatFileSize(size);
 
@@ -540,12 +561,15 @@ class VideoGridPlayer {
     titleEl.style.opacity = '0';
     infoEl.style.opacity = '0';
 
-    video.src = url;
-    video.loop = loop;
-    video.muted = mute;
     player.videoUrl = url;
     player.videoPath = filePath;
     player.videoSize = size;
+    player.transcodeUrl = transcodeUrl || null;
+    player.videoExt = ext || '';
+
+    video.src = url;
+    video.loop = loop;
+    video.muted = mute;
 
     video.play().then(() => {
       window.toomanyvids.debug('Autoplay started', { index: player.index, path: filePath });
