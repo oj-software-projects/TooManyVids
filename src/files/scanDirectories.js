@@ -32,9 +32,19 @@ const VIDEO_EXTENSIONS = new Set([
  * @param {string} filename
  * @returns {boolean}
  */
+const MIN_VIDEO_SIZE = 1024 * 1024;
+const MAC_RESOURCE_FORK_RE = /^\._/;
+
 function isVideoFile(filename) {
   const ext = path.extname(filename).toLowerCase();
   return VIDEO_EXTENSIONS.has(ext);
+}
+
+function isValidVideo(filename, fileSize) {
+  if (!isVideoFile(filename)) return false;
+  if (MAC_RESOURCE_FORK_RE.test(path.basename(filename))) return false;
+  if (fileSize < MIN_VIDEO_SIZE) return false;
+  return true;
 }
 
 /**
@@ -65,7 +75,16 @@ async function scanDirectory(dirPath) {
         const subVideos = await scanDirectory(fullPath);
         videos.push(...subVideos);
       } else if (entry.isFile() && isVideoFile(entry.name)) {
-        videos.push(fullPath);
+        try {
+          const fileStat = await fs.stat(fullPath);
+          if (isValidVideo(entry.name, fileStat.size)) {
+            videos.push(fullPath);
+          } else {
+            log.debug('Skipping invalid video', { path: fullPath, size: fileStat.size, reason: fileStat.size < MIN_VIDEO_SIZE ? 'too small' : 'mac resource fork' });
+          }
+        } catch (err) {
+          log.warn('Cannot stat file', { path: fullPath, error: err.message });
+        }
       }
     }
   } catch (err) {
