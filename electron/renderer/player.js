@@ -106,7 +106,8 @@ class VideoGridPlayer {
         videoPath: null,
         videoExt: null,
         transcodeUrl: null,
-        usingTranscode: false
+        usingTranscode: false,
+        rotation: 0
       });
     }
 
@@ -126,6 +127,10 @@ class VideoGridPlayer {
         <div class="cell-buttons">
           <button class="btn-next" title="Load random video">&#x23e9; Next</button>
           <button class="btn-pick" title="Pick from list">&#x2630; Pick</button>
+          <div class="btn-rotate-group">
+            <button class="btn-rotate-left" title="Rotate left 90°">&#x21b6;</button>
+            <button class="btn-rotate-right" title="Rotate right 90°">&#x21b7;</button>
+          </div>
         </div>
         <div class="seek-bar-container">
           <input type="range" class="seek-bar" min="0" max="100" value="0">
@@ -144,6 +149,8 @@ class VideoGridPlayer {
     const infoEl = cell.querySelector('.cell-info');
     const btnNext = cell.querySelector('.btn-next');
     const btnPick = cell.querySelector('.btn-pick');
+    const btnRotateLeft = cell.querySelector('.btn-rotate-left');
+    const btnRotateRight = cell.querySelector('.btn-rotate-right');
     const pickList = cell.querySelector('.pick-list');
 
     video.addEventListener('loadeddata', () => {
@@ -335,6 +342,25 @@ class VideoGridPlayer {
         pickList.appendChild(item);
       });
       pickList.style.display = 'block';
+    });
+
+    const applyRotation = (deg) => {
+      const player = this.players[index];
+      if (!player) return;
+      player.rotation = ((player.rotation + deg) % 360 + 360) % 360;
+      const isVertical = player.rotation === 90 || player.rotation === 270;
+      const scale = isVertical ? 'scaleY(0.5625)' : '';
+      video.style.transform = `rotate(${player.rotation}deg) ${scale}`;
+    };
+
+    btnRotateLeft.addEventListener('click', (e) => {
+      e.stopPropagation();
+      applyRotation(-90);
+    });
+
+    btnRotateRight.addEventListener('click', (e) => {
+      e.stopPropagation();
+      applyRotation(90);
     });
 
     return cell;
@@ -562,6 +588,9 @@ class VideoGridPlayer {
     loading.style.display = 'block';
     titleEl.style.opacity = '0';
     infoEl.style.opacity = '0';
+
+    player.rotation = 0;
+    video.style.transform = '';
 
     player.videoUrl = url;
     player.videoPath = filePath;
