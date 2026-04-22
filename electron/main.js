@@ -34,7 +34,9 @@ try {
   log.warn('ffmpeg not available - transcoding disabled');
 }
 
-const REMUX_EXTENSIONS = new Set(['.m4v', '.mov', '.mkv', '.avi', '.flv', '.wmv', '.mpg', '.mpeg', '.3gp']);
+const REMUX_EXTENSIONS = new Set(['.mkv', '.avi', '.flv', '.wmv', '.mpg', '.mpeg', '.3gp']);
+
+const TRANSCODE_FALLBACK_EXTENSIONS = new Set(['.mov', '.m4v', '.mkv', '.avi', '.flv', '.wmv', '.mpg', '.mpeg', '.3gp', '.ogv']);
 
 log.info('App starting', { platform: process.platform, arch: process.arch, electronVersion: process.versions.electron, ffmpegAvailable });
 
@@ -50,11 +52,11 @@ const MIME_TYPES = {
   '.mp4': 'video/mp4',
   '.mkv': 'video/x-matroska',
   '.avi': 'video/x-msvideo',
-  '.mov': 'video/quicktime',
+  '.mov': 'video/mp4',
   '.webm': 'video/webm',
   '.flv': 'video/x-flv',
   '.wmv': 'video/x-ms-wmv',
-  '.m4v': 'video/x-m4v',
+  '.m4v': 'video/mp4',
   '.mpg': 'video/mpeg',
   '.mpeg': 'video/mpeg',
   '.3gp': 'video/3gpp',
@@ -318,10 +320,11 @@ async function createWindow() {
       const ext = path.extname(videoPath).toLowerCase();
       const needsRemux = REMUX_EXTENSIONS.has(ext);
       const baseUrl = `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`;
+      const transcodeUrl = ffmpegAvailable && TRANSCODE_FALLBACK_EXTENSIONS.has(ext) ? baseUrl + '&transcode=1' : null;
 
       return {
         url: baseUrl,
-        transcodeUrl: ffmpegAvailable && needsRemux ? baseUrl + '&transcode=1' : null,
+        transcodeUrl,
         path: videoPath,
         size: fileSize,
         ext,
@@ -395,10 +398,11 @@ function handleReshuffle() {
     const ext = path.extname(videoPath).toLowerCase();
     const needsRemux = REMUX_EXTENSIONS.has(ext);
     const baseUrl = `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`;
+    const transcodeUrl = ffmpegAvailable && TRANSCODE_FALLBACK_EXTENSIONS.has(ext) ? baseUrl + '&transcode=1' : null;
 
     return {
       url: baseUrl,
-      transcodeUrl: ffmpegAvailable && needsRemux ? baseUrl + '&transcode=1' : null,
+      transcodeUrl,
       path: videoPath,
       size: fileSize,
       ext,

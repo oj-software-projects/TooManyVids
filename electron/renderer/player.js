@@ -107,6 +107,7 @@ class VideoGridPlayer {
         videoExt: null,
         transcodeUrl: null,
         usingTranscode: false,
+        needsRemux: false,
         rotation: 0
       });
     }
@@ -219,7 +220,7 @@ class VideoGridPlayer {
     });
 
     const seekRemux = (targetTime) => {
-      const baseUrl = player.videoUrl;
+      const baseUrl = player.usingTranscode && player.transcodeUrl ? player.transcodeUrl : player.videoUrl;
       const sep = baseUrl.includes('?') ? '&' : '?';
       const wasMuted = video.muted;
       const wasLoop = video.loop;
@@ -613,6 +614,7 @@ class VideoGridPlayer {
     infoEl.style.opacity = '0';
 
     player.rotation = 0;
+    player.usingTranscode = false;
     video.style.transform = '';
 
     player.videoUrl = url;
