@@ -281,7 +281,7 @@ class VideoGridPlayer {
       fullscreenContainer = document.createElement('div');
       fullscreenContainer.id = 'fullscreen-container';
       fullscreenContainer.innerHTML = `
-        <video playsinline autoplay muted></video>
+        <video playsinline muted preload="auto"></video>
         <div class="fullscreen-overlay">
           <div class="fullscreen-title"></div>
           <div class="fullscreen-info"></div>
@@ -350,6 +350,7 @@ class VideoGridPlayer {
     };
 
     const savedTime = player.video.currentTime;
+    const savedUrl = player.videoUrl || player.video.src;
     player.video.pause();
 
     fullscreenVideo.muted = this.isMuted;
@@ -357,9 +358,19 @@ class VideoGridPlayer {
     titleEl.textContent = player.element.querySelector('.cell-title').textContent;
     infoEl.textContent = player.element.querySelector('.cell-info').textContent;
 
+    fullscreenContainer.style.display = 'flex';
+
+    const tryPlay = () => {
+      if (fullscreenVideo.readyState >= 3) {
+        fullscreenVideo.currentTime = savedTime;
+        fullscreenVideo.play().catch(() => {});
+        return true;
+      }
+      return false;
+    };
+
     fullscreenVideo.oncanplay = () => {
-      fullscreenVideo.currentTime = savedTime;
-      fullscreenVideo.play().catch(() => {});
+      if (!tryPlay()) return;
       fullscreenVideo.oncanplay = null;
     };
 
@@ -367,16 +378,18 @@ class VideoGridPlayer {
       fullscreenVideo.oncanplay = null;
     };
 
-    fullscreenVideo.src = player.videoUrl || player.video.src;
-    fullscreenContainer.style.display = 'flex';
+    fullscreenVideo.src = savedUrl;
 
-    setTimeout(() => {
-      if (fullscreenVideo.readyState >= 3) {
-        fullscreenVideo.currentTime = savedTime;
-        fullscreenVideo.play().catch(() => {});
-        fullscreenVideo.oncanplay = null;
-      }
-    }, 2000);
+    if (!tryPlay()) {
+      let attempts = 0;
+      const poll = setInterval(() => {
+        attempts++;
+        if (tryPlay() || attempts > 20) {
+          clearInterval(poll);
+          fullscreenVideo.oncanplay = null;
+        }
+      }, 250);
+    }
   }
 
   exitFullscreen() {

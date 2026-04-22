@@ -12,7 +12,8 @@ const { scanDirectories } = require('../src/files/scanDirectories');
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport');
-app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
 
 let mainWindow = null;
 let config = null;
