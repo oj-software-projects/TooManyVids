@@ -128,6 +128,7 @@ class VideoGridPlayer {
         <div class="cell-buttons">
           <button class="btn-next" title="Load random video">&#x23e9; Next</button>
           <button class="btn-pick" title="Pick from list">&#x2630; Pick</button>
+          <button class="btn-meta" title="Copy metadata to clipboard">Meta</button>
           <div class="btn-rotate-group">
             <button class="btn-rotate-left" title="Rotate left 90°">&#x21b6;</button>
             <button class="btn-rotate-right" title="Rotate right 90°">&#x21b7;</button>
@@ -150,6 +151,7 @@ class VideoGridPlayer {
     const infoEl = cell.querySelector('.cell-info');
     const btnNext = cell.querySelector('.btn-next');
     const btnPick = cell.querySelector('.btn-pick');
+    const btnMeta = cell.querySelector('.btn-meta');
     const btnRotateLeft = cell.querySelector('.btn-rotate-left');
     const btnRotateRight = cell.querySelector('.btn-rotate-right');
     const pickList = cell.querySelector('.pick-list');
@@ -368,6 +370,43 @@ class VideoGridPlayer {
       pickList.style.display = 'block';
     });
 
+    btnMeta.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const p = this.players[index];
+      if (!p || !p.videoUrl) return;
+      const idMatch = p.videoUrl.match(/id=([^&]+)/);
+      if (!idMatch) return;
+      const videoId = idMatch[1];
+      try {
+        const meta = await window.toomanyvids.getVideoMeta(videoId);
+        if (meta.error) {
+          this.showToast('Meta error: ' + meta.error);
+          return;
+        }
+        const lines = [];
+        lines.push(`File: ${meta.path}`);
+        if (meta.container) lines.push(`Container: ${meta.container}`);
+        if (meta.duration) lines.push(`Duration: ${Math.floor(meta.duration / 60)}:${Math.floor(meta.duration % 60).toString().padStart(2, '0')}`);
+        if (meta.size) lines.push(`Size: ${this.formatFileSize(parseInt(meta.size))}`);
+        if (meta.bitrate) lines.push(`Bitrate: ${Math.round(parseInt(meta.bitrate) / 1000)} kbps`);
+        if (meta.videoCodec) {
+          lines.push(`Video: ${meta.videoCodecLong || meta.videoCodec} ${meta.width}x${meta.height} ${meta.fps} ${meta.pixelFormat || ''}`.trim());
+          if (meta.profile) lines.push(`Video Profile: ${meta.profile}`);
+          if (meta.rotation) lines.push(`Rotation: ${meta.rotation}°`);
+        }
+        if (meta.audioCodec) {
+          lines.push(`Audio: ${meta.audioCodecLong || meta.audioCodec} ${meta.audioSampleRate}Hz ${meta.audioChannels}ch`);
+        }
+        const text = lines.join('\n');
+        await navigator.clipboard.writeText(text);
+        this.showToast('Metadata copied to clipboard');
+        window.toomanyvids.info('Meta copied', { index, path: meta.path });
+      } catch (err) {
+        this.showToast('Failed to get metadata');
+        window.toomanyvids.error('Meta failed', { index, error: err.message });
+      }
+    });
+
     const applyRotation = (deg) => {
       const player = this.players[index];
       if (!player) return;
@@ -488,6 +527,10 @@ class VideoGridPlayer {
     titleEl.textContent = player.element.querySelector('.cell-title').textContent;
     infoEl.textContent = player.element.querySelector('.cell-info').textContent;
 
+    const isVertical = player.rotation === 90 || player.rotation === 270;
+    const scale = isVertical ? 'scaleY(0.5625)' : '';
+    fullscreenVideo.style.transform = `rotate(${player.rotation}deg) ${scale}`;
+
     fullscreenContainer.style.display = 'flex';
 
     const tryPlay = () => {
@@ -536,10 +579,14 @@ class VideoGridPlayer {
       if (player) {
         player.video.currentTime = fullscreenVideo.currentTime;
         player.video.play().catch(() => {});
+        const isVertical = player.rotation === 90 || player.rotation === 270;
+        const scale = isVertical ? 'scaleY(0.5625)' : '';
+        player.video.style.transform = `rotate(${player.rotation}deg) ${scale}`;
       }
 
       fullscreenVideo.pause();
       fullscreenVideo.src = '';
+      fullscreenVideo.style.transform = '';
       fullscreenContainer.style.display = 'none';
     }
 
@@ -699,6 +746,21 @@ class VideoGridPlayer {
     window.toomanyvids.error('Error dialog shown', { message });
     this.errorMessage.textContent = message;
     this.errorModal.classList.add('visible');
+  }
+
+  showToast(message) {
+    let toast = document.getElementById('toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'toast';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.classList.add('visible');
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      toast.classList.remove('visible');
+    }, 2500);
   }
 }
 

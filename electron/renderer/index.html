@@ -423,6 +423,26 @@
       border-radius: 4px;
       cursor: pointer;
     }
+
+    #toast {
+      position: fixed;
+      bottom: 50px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(40, 40, 40, 0.95);
+      color: #fff;
+      padding: 10px 24px;
+      border-radius: 6px;
+      font-size: 13px;
+      z-index: 9999;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+    }
+
+    #toast.visible {
+      opacity: 1;
+    }
   </style>
 </head>
 <body>

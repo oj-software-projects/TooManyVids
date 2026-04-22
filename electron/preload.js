@@ -32,6 +32,10 @@ contextBridge.exposeInMainWorld('toomanyvids', {
     return ipcRenderer.invoke('get-screen-info');
   },
 
+  getVideoMeta: (videoId) => {
+    return ipcRenderer.invoke('get-video-meta', videoId);
+  },
+
   log: (message, meta) => _log('INFO', message, meta),
   warn: (message, meta) => _log('WARN', message, meta),
   error: (message, meta) => _log('ERROR', message, meta),

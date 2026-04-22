@@ -431,6 +431,67 @@ function setupIpc() {
     };
   });
 
+  ipcMain.handle('get-video-meta', (_event, videoId) => {
+    if (!videoId || !videoPathMap.has(videoId)) {
+      return { error: 'Unknown video id' };
+    }
+    const filePath = videoPathMap.get(videoId);
+    return new Promise((resolve) => {
+      const args = [
+        '-v', 'quiet', '-print_format', 'json',
+        '-show_format', '-show_streams', filePath
+      ];
+      const proc = spawn('ffprobe', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      proc.stdout.on('data', (d) => { stdout += d.toString(); });
+      proc.on('error', () => resolve({ error: 'ffprobe not available' }));
+      proc.on('close', (code) => {
+        if (code !== 0) {
+          resolve({ error: `ffprobe exited with code ${code}` });
+          return;
+        }
+        try {
+          const data = JSON.parse(stdout);
+          const info = { path: filePath };
+          const vs = (data.streams || []).find(s => s.codec_type === 'video');
+          const as = (data.streams || []).find(s => s.codec_type === 'audio');
+          if (vs) {
+            info.videoCodec = vs.codec_name || '';
+            info.videoCodecLong = vs.codec_long_name || '';
+            info.width = vs.width;
+            info.height = vs.height;
+            info.fps = vs.r_frame_rate || '';
+            info.pixelFormat = vs.pix_fmt || '';
+            info.profile = vs.profile || '';
+            if (vs.tags && vs.tags.rotate) info.rotation = vs.tags.rotate;
+            if (vs.side_data_list) {
+              for (const sd of vs.side_data_list) {
+                if (sd.side_data_type === 'Display Matrix' && sd.rotation !== undefined) {
+                  info.rotation = sd.rotation;
+                }
+              }
+            }
+          }
+          if (as) {
+            info.audioCodec = as.codec_name || '';
+            info.audioCodecLong = as.codec_long_name || '';
+            info.audioSampleRate = as.sample_rate;
+            info.audioChannels = as.channels;
+          }
+          if (data.format) {
+            info.container = data.format.format_long_name || data.format.format_name || '';
+            info.duration = data.format.duration;
+            info.size = data.format.size;
+            info.bitrate = data.format.bit_rate;
+          }
+          resolve(info);
+        } catch (e) {
+          resolve({ error: 'Failed to parse ffprobe output' });
+        }
+      });
+    });
+  });
+
   ipcMain.on('reshuffle', () => handleReshuffle());
 
   ipcMain.on('log', (event, data) => {
