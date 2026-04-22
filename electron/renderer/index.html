@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TooManyVids</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    #app {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #toolbar {
+      height: 36px;
+      background: linear-gradient(180deg, #2d2d2d 0%, #1a1a1a 100%);
+      border-bottom: 1px solid #444;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      gap: 12px;
+      flex-shrink: 0;
+      z-index: 100;
+    }
+
+    #toolbar .title {
+      color: #fff;
+      font-weight: 600;
+      font-size: 13px;
+      margin-right: auto;
+    }
+
+    #toolbar .status {
+      color: #888;
+      font-size: 12px;
+    }
+
+    #toolbar button {
+      background: #3a3a3a;
+      border: 1px solid #555;
+      color: #ddd;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    #toolbar button:hover {
+      background: #4a4a4a;
+      border-color: #666;
+    }
+
+    #toolbar button:active {
+      background: #2a2a2a;
+    }
+
+    #grid-container {
+      flex: 1;
+      display: grid;
+      gap: 2px;
+      background: #111;
+      padding: 2px;
+    }
+
+    .video-cell {
+      position: relative;
+      background: #0a0a0a;
+      overflow: hidden;
+      border-radius: 4px;
+    }
+
+    .video-cell video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .video-cell .overlay {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 6px 10px;
+      background: linear-gradient(transparent, rgba(0,0,0,0.8));
+      color: #fff;
+      font-size: 11px;
+      opacity: 0;
+      transition: opacity 0.2s;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .video-cell:hover .overlay {
+      opacity: 1;
+    }
+
+    .video-cell .loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #666;
+      font-size: 12px;
+    }
+
+    .video-cell .error {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #ff6b6b;
+      font-size: 12px;
+      text-align: center;
+    }
+
+    /* Keyboard shortcuts hint */
+    #shortcuts {
+      position: fixed;
+      bottom: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.9);
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 12px;
+      display: none;
+      z-index: 1000;
+    }
+
+    #shortcuts.visible {
+      display: block;
+    }
+
+    #shortcuts kbd {
+      background: #333;
+      padding: 2px 6px;
+      border-radius: 3px;
+      margin: 0 4px;
+    }
+
+    /* Error modal */
+    #error-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.9);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 2000;
+    }
+
+    #error-modal.visible {
+      display: flex;
+    }
+
+    #error-modal .content {
+      background: #1a1a1a;
+      border: 1px solid #444;
+      border-radius: 8px;
+      padding: 24px;
+      max-width: 400px;
+      text-align: center;
+    }
+
+    #error-modal h3 {
+      color: #ff6b6b;
+      margin-bottom: 12px;
+    }
+
+    #error-modal p {
+      color: #aaa;
+      margin-bottom: 16px;
+    }
+
+    #error-modal button {
+      background: #3a3a3a;
+      border: 1px solid #555;
+      color: #ddd;
+      padding: 8px 24px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="toolbar">
+      <span class="title">TooManyVids</span>
+      <span class="status" id="status">Loading...</span>
+      <button id="btn-reshuffle" title="Reshuffle (R)">Reshuffle</button>
+      <button id="btn-pause" title="Pause/Resume (P)">Pause</button>
+      <button id="btn-mute" title="Toggle Mute (M)">Unmute</button>
+    </div>
+    <div id="grid-container"></div>
+  </div>
+
+  <div id="shortcuts">
+    <kbd>R</kbd> Reshuffle &nbsp;|&nbsp;
+    <kbd>P</kbd> Pause/Resume &nbsp;|&nbsp;
+    <kbd>M</kbd> Mute/Unmute &nbsp;|&nbsp;
+    <kbd>?</kbd> Toggle Help &nbsp;|&nbsp;
+    <kbd>Q</kbd> or <kbd>Esc</kbd> Quit
+  </div>
+
+  <div id="error-modal">
+    <div class="content">
+      <h3>Error</h3>
+      <p id="error-message">Something went wrong</p>
+      <button onclick="document.getElementById('error-modal').classList.remove('visible')">OK</button>
+    </div>
+  </div>
+
+  <script src="player.js"></script>
+</body>
+</html>
