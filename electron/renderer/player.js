@@ -400,10 +400,10 @@ class VideoGridPlayer {
         const text = lines.join('\n');
         await navigator.clipboard.writeText(text);
         this.showToast('Metadata copied to clipboard');
-        window.toomanyvids.info('Meta copied', { index, path: meta.path });
+        window.toomanyvids.log('Meta copied', { index, path: meta.path });
       } catch (err) {
         this.showToast('Failed to get metadata');
-        window.toomanyvids.error('Meta failed', { index, error: err.message });
+        window.toomanyvids.warn('Meta failed', { index, error: err.message });
       }
     });
 
