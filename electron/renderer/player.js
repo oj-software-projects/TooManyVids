@@ -309,17 +309,22 @@ class VideoGridPlayer {
       }
     };
 
-    fullscreenVideo.src = player.video.src;
+    const savedTime = player.video.currentTime;
+    player.video.pause();
+
     fullscreenVideo.muted = this.isMuted;
     fullscreenVideo.loop = this.config?.loop || false;
-    fullscreenVideo.currentTime = player.video.currentTime;
     titleEl.textContent = player.element.querySelector('.cell-title').textContent;
     infoEl.textContent = player.element.querySelector('.cell-info').textContent;
 
-    fullscreenVideo.play().catch(() => {});
-    fullscreenContainer.style.display = 'flex';
+    fullscreenVideo.onloadeddata = () => {
+      fullscreenVideo.currentTime = savedTime;
+      fullscreenVideo.play().catch(() => {});
+      fullscreenVideo.onloadeddata = null;
+    };
 
-    player.video.pause();
+    fullscreenVideo.src = player.video.src;
+    fullscreenContainer.style.display = 'flex';
   }
 
   exitFullscreen() {
