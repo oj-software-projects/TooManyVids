@@ -34,7 +34,11 @@ try {
   log.warn('ffmpeg not available - transcoding disabled');
 }
 
-const REMUX_EXTENSIONS = new Set(['.mkv', '.avi', '.flv', '.wmv', '.mpg', '.mpeg', '.3gp']);
+const REMUX_EXTENSIONS = new Set(['.mkv', '.avi', '.flv', '.wmv', '.3gp']);
+
+const TRANSCODE_EXTENSIONS = new Set(['.mpg', '.mpeg']);
+
+const ALL_FFMPEG_EXTENSIONS = new Set([...REMUX_EXTENSIONS, ...TRANSCODE_EXTENSIONS]);
 
 const TRANSCODE_FALLBACK_EXTENSIONS = new Set(['.mov', '.m4v', '.mkv', '.avi', '.flv', '.wmv', '.mpg', '.mpeg', '.3gp', '.ogv']);
 
@@ -138,6 +142,22 @@ function getVideoDuration(filePath) {
   });
 }
 
+const MAX_CONCURRENT_TRANSCODES = 2;
+let activeTranscodes = 0;
+const transcodeQueue = [];
+
+function processTranscodeQueue() {
+  while (activeTranscodes < MAX_CONCURRENT_TRANSCODES && transcodeQueue.length > 0) {
+    const next = transcodeQueue.shift();
+    activeTranscodes++;
+    log.info('Starting queued transcode', { filePath: next.filePath, active: activeTranscodes, queued: transcodeQueue.length });
+    next.run().finally(() => {
+      activeTranscodes--;
+      processTranscodeQueue();
+    });
+  }
+}
+
 function serveRemuxedPipe(filePath, res, transcode, seekTime) {
   const seekArgs = seekTime > 0
     ? ['-ss', String(seekTime), '-noaccurate_seek', '-i', filePath]
@@ -152,40 +172,59 @@ function serveRemuxedPipe(filePath, res, transcode, seekTime) {
 
   log.info('Serving remuxed pipe', { filePath, transcode, seekTime, cmd: args.join(' ') });
 
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Content-Type', TRANSCODE_MIME);
-  res.setHeader('Cache-Control', 'no-cache');
+  const startTranscode = () => {
+    return new Promise((resolve) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Content-Type', TRANSCODE_MIME);
+      res.setHeader('Cache-Control', 'no-cache');
 
-  const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-  proc.stdout.pipe(res);
+      proc.stdout.pipe(res);
 
-  let stderrBuf = '';
-  proc.stderr.on('data', (data) => {
-    stderrBuf += data.toString();
-    if (stderrBuf.length > 4096) stderrBuf = stderrBuf.slice(-2048);
-  });
+      let stderrBuf = '';
+      proc.stderr.on('data', (data) => {
+        stderrBuf += data.toString();
+        if (stderrBuf.length > 4096) stderrBuf = stderrBuf.slice(-2048);
+      });
 
-  proc.on('error', (err) => {
-    log.error('ffmpeg spawn error', { filePath, error: err.message });
-    if (!res.headersSent) {
-      res.writeHead(500);
-      res.end('ffmpeg error: ' + err.message);
-    } else {
-      res.end();
-    }
-  });
+      proc.on('error', (err) => {
+        log.error('ffmpeg spawn error', { filePath, error: err.message });
+        if (!res.headersSent) {
+          res.writeHead(500);
+          res.end('ffmpeg error: ' + err.message);
+        } else {
+          res.end();
+        }
+        resolve();
+      });
 
-  proc.on('close', (code) => {
-    if (code !== null && code !== 0 && code !== 255) {
-      log.error('ffmpeg exited with error', { filePath, code, stderr: stderrBuf.slice(-500) });
-    }
-    if (!res.writableEnded) res.end();
-  });
+      proc.on('close', (code) => {
+        if (code !== null && code !== 0 && code !== 255) {
+          log.error('ffmpeg exited with error', { filePath, code, stderr: stderrBuf.slice(-500) });
+        }
+        if (!res.writableEnded) res.end();
+        resolve();
+      });
 
-  res.on('close', () => {
-    proc.kill('SIGKILL');
-  });
+      res.on('close', () => {
+        proc.kill('SIGKILL');
+      });
+    });
+  };
+
+  if (transcode && activeTranscodes >= MAX_CONCURRENT_TRANSCODES) {
+    log.info('Transcode queued', { filePath, active: activeTranscodes, queued: transcodeQueue.length });
+    transcodeQueue.push({ filePath, run: startTranscode });
+  } else if (transcode) {
+    activeTranscodes++;
+    startTranscode().finally(() => {
+      activeTranscodes--;
+      processTranscodeQueue();
+    });
+  } else {
+    startTranscode();
+  }
 }
 
 function startHttpServer() {
@@ -214,11 +253,11 @@ function startHttpServer() {
 
     const filePath = videoPathMap.get(videoId);
     const ext = path.extname(filePath).toLowerCase();
-    const needsRemux = REMUX_EXTENSIONS.has(ext);
+    const needsFfmpeg = ALL_FFMPEG_EXTENSIONS.has(ext);
 
     try {
-      if (ffmpegAvailable && (transcode || needsRemux)) {
-        log.info('Serving via remux pipe', { videoId, ext, transcode, remux: needsRemux && !transcode, seekTime });
+      if (ffmpegAvailable && (transcode || needsFfmpeg)) {
+        log.info('Serving via ffmpeg pipe', { videoId, ext, transcode, seekTime });
         serveRemuxedPipe(filePath, res, transcode, seekTime);
       } else {
         log.debug('Serving direct', { videoId, ext });
@@ -318,17 +357,22 @@ async function createWindow() {
       }
 
       const ext = path.extname(videoPath).toLowerCase();
-      const needsRemux = REMUX_EXTENSIONS.has(ext);
+      const needsFfmpeg = ALL_FFMPEG_EXTENSIONS.has(ext);
       const baseUrl = `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`;
       const transcodeUrl = ffmpegAvailable && TRANSCODE_FALLBACK_EXTENSIONS.has(ext) ? baseUrl + '&transcode=1' : null;
 
+      let url = baseUrl;
+      if (ffmpegAvailable && needsFfmpeg) {
+        url = baseUrl + '&transcode=1';
+      }
+
       return {
-        url: baseUrl,
-        transcodeUrl,
+        url,
+        transcodeUrl: url.includes('transcode=1') ? null : transcodeUrl,
         path: videoPath,
         size: fileSize,
         ext,
-        needsRemux
+        needsRemux: needsFfmpeg
       };
     };
 
@@ -396,17 +440,22 @@ function handleReshuffle() {
     } catch (err) {}
 
     const ext = path.extname(videoPath).toLowerCase();
-    const needsRemux = REMUX_EXTENSIONS.has(ext);
+    const needsFfmpeg = ALL_FFMPEG_EXTENSIONS.has(ext);
     const baseUrl = `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`;
     const transcodeUrl = ffmpegAvailable && TRANSCODE_FALLBACK_EXTENSIONS.has(ext) ? baseUrl + '&transcode=1' : null;
 
+    let url = baseUrl;
+    if (ffmpegAvailable && needsFfmpeg) {
+      url = baseUrl + '&transcode=1';
+    }
+
     return {
-      url: baseUrl,
-      transcodeUrl,
+      url,
+      transcodeUrl: url.includes('transcode=1') ? null : transcodeUrl,
       path: videoPath,
       size: fileSize,
       ext,
-      needsRemux
+      needsRemux: needsFfmpeg
     };
   };
 

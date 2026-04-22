@@ -662,7 +662,7 @@ class VideoGridPlayer {
       setTimeout(() => {
         const videoData = shuffled[index % shuffled.length];
         this.loadSingleVideo(player, videoData, loop, mute);
-      }, index * 500);
+      }, index * 1500);
     });
   }
 
