@@ -8,16 +8,14 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { parseArgs } = require('../src/cli/parseArgs');
-const { scanDirectories, selectVideos } = require('../src/files/scanDirectories');
+const { scanDirectories } = require('../src/files/scanDirectories');
 
-// Disable autoplay restrictions
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 let mainWindow = null;
 let config = null;
 let videos = [];
 
-// HTTP server for serving video files
 const HTTP_PORT = 18923;
 let httpServer = null;
 let videoPathMap = new Map();
@@ -41,31 +39,54 @@ function startHttpServer() {
   httpServer = http.createServer((req, res) => {
     const url = new URL(req.url, `http://localhost:${HTTP_PORT}`);
     const videoId = url.searchParams.get('id');
-    
+
     if (!videoId || !videoPathMap.has(videoId)) {
       res.writeHead(404);
       res.end('Not found');
       return;
     }
-    
+
     const filePath = videoPathMap.get(videoId);
     const ext = path.extname(filePath).toLowerCase();
     const mimeType = MIME_TYPES[ext] || 'application/octet-stream';
-    
+
     try {
       const stat = fs.statSync(filePath);
-      res.writeHead(200, {
-        'Content-Type': mimeType,
-        'Content-Length': stat.size,
-        'Access-Control-Allow-Origin': '*'
-      });
-      fs.createReadStream(filePath).pipe(res);
+      const fileSize = stat.size;
+      const range = req.headers.range;
+
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Headers', 'Range');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+
+      if (range) {
+        const parts = range.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+        const chunkSize = end - start + 1;
+
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunkSize,
+          'Content-Type': mimeType
+        });
+
+        fs.createReadStream(filePath, { start, end }).pipe(res);
+      } else {
+        res.writeHead(200, {
+          'Content-Type': mimeType,
+          'Content-Length': fileSize,
+          'Accept-Ranges': 'bytes'
+        });
+        fs.createReadStream(filePath).pipe(res);
+      }
     } catch (err) {
       res.writeHead(404);
       res.end('File not found');
     }
   });
-  
+
   httpServer.listen(HTTP_PORT, '127.0.0.1');
 }
 
@@ -105,18 +126,41 @@ async function createWindow() {
     }
 
     const cellCount = config.grid.rows * config.grid.cols;
-    const selectedVideos = selectVideos(videos, cellCount, config.shuffle, config.seed);
-    
+
+    let uniqueVideos = [...videos];
+    if (config.shuffle) {
+      for (let i = uniqueVideos.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [uniqueVideos[i], uniqueVideos[j]] = [uniqueVideos[j], uniqueVideos[i]];
+      }
+    }
+
+    const selectedVideos = [];
+    for (let i = 0; i < cellCount; i++) {
+      selectedVideos.push(uniqueVideos[i % uniqueVideos.length]);
+    }
+
     videoPathMap.clear();
-    const videoUrls = selectedVideos.map((videoPath, index) => {
+    const videoData = selectedVideos.map((videoPath, index) => {
       const id = `v${index}`;
       videoPathMap.set(id, videoPath);
-      return `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`;
+
+      let fileSize = 0;
+      try {
+        const stat = fs.statSync(videoPath);
+        fileSize = stat.size;
+      } catch (err) {}
+
+      return {
+        url: `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`,
+        path: videoPath,
+        size: fileSize
+      };
     });
 
     mainWindow.webContents.send('config', {
       grid: config.grid,
-      videos: videoUrls,
+      videos: videoData,
       loop: config.loop,
       mute: config.mute,
       screenWidth,
@@ -139,17 +183,33 @@ function handleReshuffle() {
   if (!mainWindow || videos.length === 0) return;
 
   const cellCount = config.grid.rows * config.grid.cols;
-  const selectedVideos = selectVideos(videos, cellCount, true, null);
-  
+
+  const shuffled = [...videos].sort(() => Math.random() - 0.5);
+  const selectedVideos = [];
+  for (let i = 0; i < cellCount; i++) {
+    selectedVideos.push(shuffled[i % shuffled.length]);
+  }
+
   videoPathMap.clear();
-  const videoUrls = selectedVideos.map((videoPath, index) => {
+  const videoData = selectedVideos.map((videoPath, index) => {
     const id = `v${index}`;
     videoPathMap.set(id, videoPath);
-    return `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`;
+
+    let fileSize = 0;
+    try {
+      const stat = fs.statSync(videoPath);
+      fileSize = stat.size;
+    } catch (err) {}
+
+    return {
+      url: `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`,
+      path: videoPath,
+      size: fileSize
+    };
   });
 
   mainWindow.webContents.send('reshuffle', {
-    videos: videoUrls,
+    videos: videoData,
     loop: config.loop,
     mute: config.mute
   });

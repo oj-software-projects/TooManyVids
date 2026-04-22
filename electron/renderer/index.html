@@ -98,26 +98,6 @@
       display: block;
     }
 
-    .video-cell .overlay {
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      padding: 6px 10px;
-      background: linear-gradient(transparent, rgba(0,0,0,0.8));
-      color: #fff;
-      font-size: 11px;
-      opacity: 0;
-      transition: opacity 0.2s;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .video-cell:hover .overlay {
-      opacity: 1;
-    }
-
     .video-cell .loading {
       position: absolute;
       top: 50%;
@@ -125,16 +105,171 @@
       transform: translate(-50%, -50%);
       color: #666;
       font-size: 12px;
+      z-index: 5;
     }
 
-    .video-cell .error {
+    .video-cell .cell-overlay {
       position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      color: #ff6b6b;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 30px 10px 10px;
+      background: linear-gradient(transparent, rgba(0,0,0,0.9));
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .video-cell .cell-overlay.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .video-cell .cell-title {
+      color: #fff;
       font-size: 12px;
-      text-align: center;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 2px;
+    }
+
+    .video-cell .cell-info {
+      color: #888;
+      font-size: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 8px;
+    }
+
+    .video-cell .seek-bar-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .video-cell .seek-bar {
+      flex: 1;
+      height: 4px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: rgba(255,255,255,0.3);
+      border-radius: 2px;
+      cursor: pointer;
+    }
+
+    .video-cell .seek-bar::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px;
+      height: 12px;
+      background: #fff;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+
+    .video-cell .seek-bar::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      background: #fff;
+      border-radius: 50%;
+      cursor: pointer;
+      border: none;
+    }
+
+    .video-cell .time-display {
+      color: #aaa;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    /* Fullscreen styles */
+    #fullscreen-container {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      z-index: 5000;
+    }
+
+    #fullscreen-container video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    #fullscreen-container .fullscreen-overlay {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 40px 20px 20px;
+      background: linear-gradient(transparent, rgba(0,0,0,0.9));
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    #fullscreen-container .fullscreen-overlay.visible {
+      opacity: 1;
+    }
+
+    #fullscreen-container .fullscreen-title {
+      color: #fff;
+      font-size: 16px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+
+    #fullscreen-container .fullscreen-info {
+      color: #888;
+      font-size: 12px;
+      margin-bottom: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #fullscreen-container .fullscreen-seek-container {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #fullscreen-container .fullscreen-seek {
+      flex: 1;
+      height: 6px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: rgba(255,255,255,0.3);
+      border-radius: 3px;
+      cursor: pointer;
+    }
+
+    #fullscreen-container .fullscreen-seek::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      background: #fff;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+
+    #fullscreen-container .fullscreen-time {
+      color: #fff;
+      font-size: 14px;
+    }
+
+    #fullscreen-container .fullscreen-hint {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      color: rgba(255,255,255,0.5);
+      font-size: 12px;
     }
 
     /* Keyboard shortcuts hint */

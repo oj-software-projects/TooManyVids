@@ -3,6 +3,7 @@
  * Exposes safe IPC methods to the renderer
  */
 
+console.log('Preload script loaded');
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('toomanyvids', {
