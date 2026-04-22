@@ -68,12 +68,14 @@ class VideoGridPlayer {
 
   setupIpcListeners() {
     window.toomanyvids.onConfig((config) => {
-      window.toomanyvids.log('Config received', { grid: config.grid?.rows + 'x' + config.grid?.cols, videoCount: config.videos?.length });
+      window.toomanyvids.log('Config received', { grid: config.grid?.rows + 'x' + config.grid?.cols, videoCount: config.videos?.length, poolCount: config.pool?.length });
+      this.videoPool = config.pool || config.videos || [];
       this.initializeGrid(config);
     });
 
     window.toomanyvids.onReshuffle((data) => {
-      window.toomanyvids.log('Reshuffle received', { videoCount: data.videos?.length });
+      window.toomanyvids.log('Reshuffle received', { videoCount: data.videos?.length, poolCount: data.pool?.length });
+      this.videoPool = data.pool || data.videos || [];
       this.loadVideos(data.videos, data.loop, data.mute);
     });
 
@@ -86,7 +88,6 @@ class VideoGridPlayer {
   initializeGrid(config) {
     this.config = config;
     const { grid, videos, loop, mute } = config;
-    this.videoPool = videos;
 
     this.gridContainer.style.gridTemplateColumns = `repeat(${grid.cols}, 1fr)`;
     this.gridContainer.style.gridTemplateRows = `repeat(${grid.rows}, 1fr)`;
@@ -109,6 +110,7 @@ class VideoGridPlayer {
       });
     }
 
+    window.toomanyvids.log('Grid initialized', { cells: this.players.length, poolSize: this.videoPool.length });
     this.loadVideos(videos, loop, mute);
   }
 

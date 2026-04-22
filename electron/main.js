@@ -260,8 +260,9 @@ async function createWindow() {
     }
 
     videoPathMap.clear();
-    const videoData = selectedVideos.map((videoPath, index) => {
-      const id = `v${index}`;
+
+    const buildVideoData = (videoPath, idPrefix, index) => {
+      const id = `${idPrefix}${index}`;
       videoPathMap.set(id, videoPath);
 
       let fileSize = 0;
@@ -284,13 +285,17 @@ async function createWindow() {
         ext,
         needsRemux
       };
-    });
+    };
 
-    log.info('Sending config to renderer', { cellCount, videoCount: videoData.length, ffmpegAvailable });
+    const selectedData = selectedVideos.map((vp, i) => buildVideoData(vp, 'v', i));
+    const poolData = videos.map((vp, i) => buildVideoData(vp, 'p', i));
+
+    log.info('Sending config to renderer', { cellCount, selectedCount: selectedData.length, poolCount: poolData.length, ffmpegAvailable });
 
     mainWindow.webContents.send('config', {
       grid: config.grid,
-      videos: videoData,
+      videos: selectedData,
+      pool: poolData,
       loop: config.loop,
       mute: config.mute,
       screenWidth,
@@ -334,8 +339,9 @@ function handleReshuffle() {
   }
 
   videoPathMap.clear();
-  const videoData = selectedVideos.map((videoPath, index) => {
-    const id = `v${index}`;
+
+  const buildVideoData = (videoPath, idPrefix, index) => {
+    const id = `${idPrefix}${index}`;
     videoPathMap.set(id, videoPath);
 
     let fileSize = 0;
@@ -356,10 +362,14 @@ function handleReshuffle() {
       ext,
       needsRemux
     };
-  });
+  };
+
+  const selectedData = selectedVideos.map((vp, i) => buildVideoData(vp, 'v', i));
+  const poolData = videos.map((vp, i) => buildVideoData(vp, 'p', i));
 
   mainWindow.webContents.send('reshuffle', {
-    videos: videoData,
+    videos: selectedData,
+    pool: poolData,
     loop: config.loop,
     mute: config.mute
   });
