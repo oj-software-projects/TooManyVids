@@ -218,6 +218,17 @@ class VideoGridPlayer {
       }
     });
 
+    const seekRemux = (targetTime) => {
+      const baseUrl = player.videoUrl;
+      const sep = baseUrl.includes('?') ? '&' : '?';
+      const wasMuted = video.muted;
+      const wasLoop = video.loop;
+      video.src = baseUrl + sep + 't=' + Math.floor(targetTime);
+      video.muted = wasMuted;
+      video.loop = wasLoop;
+      video.play().catch(() => {});
+    };
+
     let isSeeking = false;
     let seekTargetTime = null;
 
@@ -231,7 +242,11 @@ class VideoGridPlayer {
       seekBar.releasePointerCapture(e.pointerId);
       if (seekTargetTime !== null) {
         loading.style.display = 'block';
-        video.currentTime = seekTargetTime;
+        if (player.needsRemux) {
+          seekRemux(seekTargetTime);
+        } else {
+          video.currentTime = seekTargetTime;
+        }
         seekTargetTime = null;
       }
     });
@@ -241,6 +256,10 @@ class VideoGridPlayer {
       if (video.paused && !this.isPaused) {
         video.play().catch(() => {});
       }
+    });
+
+    video.addEventListener('canplay', () => {
+      loading.style.display = 'none';
     });
 
     seekBar.addEventListener('input', (e) => {
@@ -272,7 +291,11 @@ class VideoGridPlayer {
         const rect = seekBar.getBoundingClientRect();
         const percent = (e.clientX - rect.left) / rect.width;
         loading.style.display = 'block';
-        video.currentTime = percent * video.duration;
+        if (player.needsRemux) {
+          seekRemux(percent * video.duration);
+        } else {
+          video.currentTime = percent * video.duration;
+        }
       }
     });
 
@@ -597,6 +620,7 @@ class VideoGridPlayer {
     player.videoSize = size;
     player.transcodeUrl = transcodeUrl || null;
     player.videoExt = ext || '';
+    player.needsRemux = !!needsRemux;
 
     video.src = url;
     video.loop = loop;

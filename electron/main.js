@@ -6,7 +6,6 @@
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 const http = require('http');
 const { spawn } = require('child_process');
 const { parseArgs } = require('../src/cli/parseArgs');
@@ -108,123 +107,83 @@ function serveDirect(filePath, range, res) {
   }
 }
 
-const remuxCacheDir = path.join(os.homedir(), '.toomanyvids', 'remux_cache');
+const videoDurationCache = new Map();
 
-function getRemuxCachePath(filePath, transcode) {
-  const hash = require('crypto').createHash('sha256').update(filePath + (transcode ? ':transcode' : ':remux')).digest('hex').slice(0, 16);
-  return path.join(remuxCacheDir, `${hash}.mp4`);
-}
-
-function ensureRemuxCacheDir() {
-  if (!fs.existsSync(remuxCacheDir)) {
-    fs.mkdirSync(remuxCacheDir, { recursive: true });
+function getVideoDuration(filePath) {
+  if (videoDurationCache.has(filePath)) {
+    return Promise.resolve(videoDurationCache.get(filePath));
   }
-}
 
-function remuxToTempFile(filePath, transcode) {
-  return new Promise((resolve, reject) => {
-    ensureRemuxCacheDir();
-    const tempPath = getRemuxCachePath(filePath, transcode);
+  return new Promise((resolve) => {
+    const proc = spawn('ffprobe', [
+      '-v', 'error', '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1', filePath
+    ], { stdio: ['ignore', 'pipe', 'ignore'] });
 
-    if (fs.existsSync(tempPath)) {
-      const stat = fs.statSync(tempPath);
-      if (stat.size > 0) {
-        log.info('Using cached remux file', { filePath, tempPath, size: stat.size });
-        resolve(tempPath);
-        return;
-      }
-      fs.unlinkSync(tempPath);
-    }
+    let output = '';
+    proc.stdout.on('data', (data) => { output += data.toString(); });
 
-    const remuxArgs = ['-i', filePath, '-c', 'copy', '-metadata:s:v', 'rotate=0',
-       '-f', 'mp4', '-movflags', '+faststart', tempPath];
-
-    const transcodeArgs = ['-i', filePath, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
-       '-c:a', 'aac', '-b:a', '128k', '-vf', 'autorotate',
-       '-f', 'mp4', '-movflags', '+faststart', tempPath];
-
-    const args = transcode ? transcodeArgs : remuxArgs;
-
-    log.info('Remuxing to temp file', { filePath, transcode, tempPath, cmd: args.join(' ') });
-
-    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
-
-    let stderrBuf = '';
-    proc.stderr.on('data', (data) => {
-      stderrBuf += data.toString();
-      if (stderrBuf.length > 4096) {
-        stderrBuf = stderrBuf.slice(-2048);
-      }
-    });
-
-    proc.on('error', (err) => {
-      log.error('ffmpeg spawn error', { filePath, error: err.message });
-      reject(err);
+    proc.on('error', () => {
+      videoDurationCache.set(filePath, 0);
+      resolve(0);
     });
 
     proc.on('close', (code) => {
-      if (code !== 0) {
-        log.error('ffmpeg remux failed', { filePath, code, stderr: stderrBuf.slice(-500) });
-        try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_) {}
-        reject(new Error(`ffmpeg exited with code ${code}`));
-        return;
-      }
-      try {
-        const stat = fs.statSync(tempPath);
-        if (stat.size > 0) {
-          log.info('Remux complete', { filePath, tempPath, size: stat.size });
-          resolve(tempPath);
-        } else {
-          fs.unlinkSync(tempPath);
-          reject(new Error('Remuxed file is empty'));
-        }
-      } catch (err) {
-        reject(err);
-      }
+      const duration = code === 0 ? (parseFloat(output.trim()) || 0) : 0;
+      videoDurationCache.set(filePath, duration);
+      resolve(duration);
     });
   });
 }
 
-function serveFileWithRange(filePath, range, res, mimeType) {
-  const stat = fs.statSync(filePath);
-  const fileSize = stat.size;
+function serveRemuxedPipe(filePath, res, transcode, seekTime) {
+  const seekArgs = seekTime > 0
+    ? ['-ss', String(seekTime), '-noaccurate_seek', '-i', filePath]
+    : ['-i', filePath];
+
+  const args = transcode
+    ? [...seekArgs, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+       '-c:a', 'aac', '-b:a', '128k', '-vf', 'autorotate',
+       '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov', '-']
+    : [...seekArgs, '-c', 'copy', '-metadata:s:v', 'rotate=0',
+       '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov', '-'];
+
+  log.info('Serving remuxed pipe', { filePath, transcode, seekTime, cmd: args.join(' ') });
 
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'Range');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+  res.setHeader('Content-Type', TRANSCODE_MIME);
+  res.setHeader('Cache-Control', 'no-cache');
 
-  if (range) {
-    const parts = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(parts[0], 10);
-    let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-    const MAX_CHUNK = 2 * 1024 * 1024;
-    if (end - start + 1 > MAX_CHUNK) {
-      end = start + MAX_CHUNK - 1;
+  const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  proc.stdout.pipe(res);
+
+  let stderrBuf = '';
+  proc.stderr.on('data', (data) => {
+    stderrBuf += data.toString();
+    if (stderrBuf.length > 4096) stderrBuf = stderrBuf.slice(-2048);
+  });
+
+  proc.on('error', (err) => {
+    log.error('ffmpeg spawn error', { filePath, error: err.message });
+    if (!res.headersSent) {
+      res.writeHead(500);
+      res.end('ffmpeg error: ' + err.message);
+    } else {
+      res.end();
     }
-    const chunkSize = end - start + 1;
+  });
 
-    res.writeHead(206, {
-      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': chunkSize,
-      'Content-Type': mimeType
-    });
+  proc.on('close', (code) => {
+    if (code !== null && code !== 0 && code !== 255) {
+      log.error('ffmpeg exited with error', { filePath, code, stderr: stderrBuf.slice(-500) });
+    }
+    if (!res.writableEnded) res.end();
+  });
 
-    fs.createReadStream(filePath, { start, end }).pipe(res);
-  } else {
-    const MAX_INITIAL = 2 * 1024 * 1024;
-    const end = Math.min(MAX_INITIAL, fileSize) - 1;
-    const chunkSize = end + 1;
-
-    res.writeHead(206, {
-      'Content-Range': `bytes 0-${end}/${fileSize}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': chunkSize,
-      'Content-Type': mimeType
-    });
-
-    fs.createReadStream(filePath, { start: 0, end }).pipe(res);
-  }
+  res.on('close', () => {
+    proc.kill('SIGKILL');
+  });
 }
 
 function startHttpServer() {
@@ -232,6 +191,17 @@ function startHttpServer() {
     const url = new URL(req.url, `http://localhost:${HTTP_PORT}`);
     const videoId = url.searchParams.get('id');
     const transcode = url.searchParams.get('transcode') === '1';
+    const seekTime = parseFloat(url.searchParams.get('t') || '0') || 0;
+
+    if (req.url === '/duration' && videoId && videoPathMap.has(videoId)) {
+      const filePath = videoPathMap.get(videoId);
+      getVideoDuration(filePath).then((duration) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ duration }));
+      });
+      return;
+    }
 
     if (!videoId || !videoPathMap.has(videoId)) {
       log.warn('HTTP 404 - unknown video id', { videoId, url: req.url });
@@ -246,22 +216,8 @@ function startHttpServer() {
 
     try {
       if (ffmpegAvailable && (transcode || needsRemux)) {
-        log.info('Serving via remux cache', { videoId, ext, transcode, remux: needsRemux && !transcode });
-        remuxToTempFile(filePath, transcode)
-          .then((tempPath) => {
-            serveFileWithRange(tempPath, req.headers.range, res, TRANSCODE_MIME);
-          })
-          .catch((err) => {
-            log.error('Remux failed, serving direct', { videoId, error: err.message });
-            try {
-              serveDirect(filePath, req.headers.range, res);
-            } catch (directErr) {
-              if (!res.headersSent) {
-                res.writeHead(500);
-                res.end('Server error');
-              }
-            }
-          });
+        log.info('Serving via remux pipe', { videoId, ext, transcode, remux: needsRemux && !transcode, seekTime });
+        serveRemuxedPipe(filePath, res, transcode, seekTime);
       } else {
         log.debug('Serving direct', { videoId, ext });
         serveDirect(filePath, req.headers.range, res);
