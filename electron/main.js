@@ -11,6 +11,8 @@ const { parseArgs } = require('../src/cli/parseArgs');
 const { scanDirectories } = require('../src/files/scanDirectories');
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport');
+app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 
 let mainWindow = null;
 let config = null;

@@ -106,7 +106,7 @@ class VideoGridPlayer {
     const cell = document.createElement('div');
     cell.className = 'video-cell';
     cell.innerHTML = `
-      <video playsinline autoplay muted preload="metadata"></video>
+      <video playsinline autoplay muted preload="auto"></video>
       <div class="loading">Loading...</div>
       <div class="cell-overlay">
         <div class="cell-title"></div>
@@ -138,7 +138,13 @@ class VideoGridPlayer {
     video.addEventListener('error', () => {
       loading.style.display = 'none';
       const title = titleEl.textContent || 'Video';
-      titleEl.textContent = 'Click to play: ' + title;
+      const ext = player.videoUrl ? player.videoUrl.split('.').pop().split('?')[0].toLowerCase() : '';
+      const unsupported = ['mkv', 'avi', 'flv', 'wmv', 'hevc', 'h265'];
+      if (unsupported.includes(ext)) {
+        titleEl.textContent = 'Unsupported format: ' + ext.toUpperCase();
+      } else {
+        titleEl.textContent = 'Click to play: ' + title;
+      }
       titleEl.style.opacity = '1';
       infoEl.style.opacity = '1';
 
@@ -148,6 +154,14 @@ class VideoGridPlayer {
         titleEl.style.opacity = '0';
         infoEl.style.opacity = '0';
       };
+    });
+
+    video.addEventListener('stalled', () => {
+      loading.style.display = 'block';
+    });
+
+    video.addEventListener('playing', () => {
+      loading.style.display = 'none';
     });
 
     video.addEventListener('ended', () => {
@@ -168,8 +182,16 @@ class VideoGridPlayer {
       isSeeking = false;
       seekBar.releasePointerCapture(e.pointerId);
       if (seekTargetTime !== null) {
+        loading.style.display = 'block';
         video.currentTime = seekTargetTime;
         seekTargetTime = null;
+      }
+    });
+
+    video.addEventListener('seeked', () => {
+      loading.style.display = 'none';
+      if (video.paused && !this.isPaused) {
+        video.play().catch(() => {});
       }
     });
 
@@ -201,6 +223,7 @@ class VideoGridPlayer {
       if (video.duration) {
         const rect = seekBar.getBoundingClientRect();
         const percent = (e.clientX - rect.left) / rect.width;
+        loading.style.display = 'block';
         video.currentTime = percent * video.duration;
       }
     });
@@ -208,6 +231,24 @@ class VideoGridPlayer {
     cell.addEventListener('dblclick', (e) => {
       e.preventDefault();
       this.toggleFullscreen(index);
+    });
+
+    let clickTimer = null;
+    cell.addEventListener('click', (e) => {
+      if (e.target.closest('.seek-bar-container')) return;
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = null;
+        return;
+      }
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        if (video.paused) {
+          video.play().catch(() => {});
+        } else {
+          video.pause();
+        }
+      }, 250);
     });
 
     cell.addEventListener('mouseenter', () => {
