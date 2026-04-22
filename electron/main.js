@@ -11,9 +11,11 @@ const { parseArgs } = require('../src/cli/parseArgs');
 const { scanDirectories } = require('../src/files/scanDirectories');
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport');
-app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling');
+app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport,Vulkan');
+app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,UseChromeOSDirectVideoDecoder');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('num-raster-threads', '4');
 
 let mainWindow = null;
 let config = null;
@@ -65,7 +67,11 @@ function startHttpServer() {
       if (range) {
         const parts = range.replace(/bytes=/, '').split('-');
         const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+        let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+        const MAX_CHUNK = 2 * 1024 * 1024;
+        if (end - start + 1 > MAX_CHUNK) {
+          end = start + MAX_CHUNK - 1;
+        }
         const chunkSize = end - start + 1;
 
         res.writeHead(206, {
@@ -77,12 +83,18 @@ function startHttpServer() {
 
         fs.createReadStream(filePath, { start, end }).pipe(res);
       } else {
-        res.writeHead(200, {
-          'Content-Type': mimeType,
-          'Content-Length': fileSize,
-          'Accept-Ranges': 'bytes'
+        const MAX_INITIAL = 2 * 1024 * 1024;
+        const end = Math.min(MAX_INITIAL, fileSize) - 1;
+        const chunkSize = end + 1;
+
+        res.writeHead(206, {
+          'Content-Range': `bytes 0-${end}/${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunkSize,
+          'Content-Type': mimeType
         });
-        fs.createReadStream(filePath).pipe(res);
+
+        fs.createReadStream(filePath, { start: 0, end }).pipe(res);
       }
     } catch (err) {
       res.writeHead(404);

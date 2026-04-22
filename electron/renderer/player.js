@@ -106,7 +106,7 @@ class VideoGridPlayer {
     const cell = document.createElement('div');
     cell.className = 'video-cell';
     cell.innerHTML = `
-      <video playsinline autoplay muted preload="auto"></video>
+      <video playsinline autoplay muted preload="metadata"></video>
       <div class="loading">Loading...</div>
       <div class="cell-overlay">
         <div class="cell-title"></div>
@@ -281,7 +281,7 @@ class VideoGridPlayer {
       fullscreenContainer = document.createElement('div');
       fullscreenContainer.id = 'fullscreen-container';
       fullscreenContainer.innerHTML = `
-        <video playsinline muted preload="auto"></video>
+        <video playsinline muted preload="metadata"></video>
         <div class="fullscreen-overlay">
           <div class="fullscreen-title"></div>
           <div class="fullscreen-info"></div>
@@ -422,7 +422,7 @@ class VideoGridPlayer {
       setTimeout(() => {
         const videoData = shuffled[index % shuffled.length];
         this.loadSingleVideo(player, videoData, loop, mute);
-      }, index * 100);
+      }, index * 500);
     });
   }
 
