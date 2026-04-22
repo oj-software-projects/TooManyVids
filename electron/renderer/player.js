@@ -10,6 +10,7 @@ class VideoGridPlayer {
     this.isPaused = false;
     this.isMuted = false;
     this.fullscreenPlayer = null;
+    this.videoPool = [];
 
     this.gridContainer = document.getElementById('grid-container');
     this.statusEl = document.getElementById('status');
@@ -19,6 +20,7 @@ class VideoGridPlayer {
 
     this.setupEventListeners();
     this.setupIpcListeners();
+    window.toomanyvids.log('VideoGridPlayer initialized');
   }
 
   setupEventListeners() {
@@ -66,14 +68,17 @@ class VideoGridPlayer {
 
   setupIpcListeners() {
     window.toomanyvids.onConfig((config) => {
+      window.toomanyvids.log('Config received', { grid: config.grid?.rows + 'x' + config.grid?.cols, videoCount: config.videos?.length });
       this.initializeGrid(config);
     });
 
     window.toomanyvids.onReshuffle((data) => {
+      window.toomanyvids.log('Reshuffle received', { videoCount: data.videos?.length });
       this.loadVideos(data.videos, data.loop, data.mute);
     });
 
     window.toomanyvids.onError((message) => {
+      window.toomanyvids.error('IPC error', { message });
       this.showError(message);
     });
   }
@@ -81,6 +86,7 @@ class VideoGridPlayer {
   initializeGrid(config) {
     this.config = config;
     const { grid, videos, loop, mute } = config;
+    this.videoPool = videos;
 
     this.gridContainer.style.gridTemplateColumns = `repeat(${grid.cols}, 1fr)`;
     this.gridContainer.style.gridTemplateRows = `repeat(${grid.rows}, 1fr)`;
@@ -111,10 +117,15 @@ class VideoGridPlayer {
       <div class="cell-overlay">
         <div class="cell-title"></div>
         <div class="cell-info"></div>
+        <div class="cell-buttons">
+          <button class="btn-next" title="Load random video">&#x23e9; Next</button>
+          <button class="btn-pick" title="Pick from list">&#x2630; Pick</button>
+        </div>
         <div class="seek-bar-container">
           <input type="range" class="seek-bar" min="0" max="100" value="0">
           <span class="time-display">0:00 / 0:00</span>
         </div>
+        <div class="pick-list" style="display:none"></div>
       </div>
     `;
 
@@ -125,6 +136,9 @@ class VideoGridPlayer {
     const timeDisplay = cell.querySelector('.time-display');
     const titleEl = cell.querySelector('.cell-title');
     const infoEl = cell.querySelector('.cell-info');
+    const btnNext = cell.querySelector('.btn-next');
+    const btnPick = cell.querySelector('.btn-pick');
+    const pickList = cell.querySelector('.pick-list');
 
     video.addEventListener('loadeddata', () => {
       loading.style.display = 'none';
@@ -139,6 +153,10 @@ class VideoGridPlayer {
       loading.style.display = 'none';
       const ext = player.videoPath ? player.videoPath.split('.').pop().toLowerCase() : '';
       const unsupported = ['mkv', 'avi', 'flv', 'wmv', 'hevc', 'h265'];
+      const videoError = video.error;
+      const errCode = videoError ? videoError.code : 'unknown';
+      const errMsg = videoError ? videoError.message : 'unknown';
+      window.toomanyvids.error('Video error', { index, ext, errCode, errMsg, src: player.videoUrl });
       if (unsupported.includes(ext)) {
         titleEl.textContent = 'Codec? : .' + ext.toUpperCase();
       } else {
@@ -156,6 +174,7 @@ class VideoGridPlayer {
     });
 
     video.addEventListener('stalled', () => {
+      window.toomanyvids.warn('Video stalled', { index, src: player.videoUrl });
       loading.style.display = 'block';
     });
 
@@ -256,6 +275,43 @@ class VideoGridPlayer {
 
     cell.addEventListener('mouseleave', () => {
       cellOverlay.classList.remove('visible');
+      pickList.style.display = 'none';
+    });
+
+    btnNext.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const next = this.getAvailableVideo(index);
+      if (next) {
+        window.toomanyvids.log('Next video', { index, path: next.path });
+        this.loadSingleVideo(this.players[index], next, this.config?.loop, this.config?.mute);
+      } else {
+        window.toomanyvids.warn('No available video for Next', { index });
+      }
+    });
+
+    btnPick.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (pickList.style.display === 'block') {
+        pickList.style.display = 'none';
+        return;
+      }
+      const available = this.getAvailableVideos(index);
+      pickList.innerHTML = '';
+      available.forEach((v) => {
+        const name = v.path.split(/[/\\]/).pop().replace(/\.[^/.]+$/, '');
+        const item = document.createElement('div');
+        item.className = 'pick-item';
+        item.textContent = name;
+        item.title = v.path;
+        item.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          window.toomanyvids.log('Pick video', { index, path: v.path });
+          this.loadSingleVideo(this.players[index], v, this.config?.loop, this.config?.mute);
+          pickList.style.display = 'none';
+        });
+        pickList.appendChild(item);
+      });
+      pickList.style.display = 'block';
     });
 
     return cell;
@@ -273,6 +329,7 @@ class VideoGridPlayer {
     const player = this.players[index];
     if (!player) return;
 
+    window.toomanyvids.log('Enter fullscreen', { index, path: player.videoPath });
     this.fullscreenPlayer = index;
     this.gridContainer.style.display = 'none';
 
@@ -375,6 +432,7 @@ class VideoGridPlayer {
     };
 
     fullscreenVideo.onerror = () => {
+      window.toomanyvids.error('Fullscreen video error', { index, src: savedUrl, readyState: fullscreenVideo.readyState });
       fullscreenVideo.oncanplay = null;
     };
 
@@ -395,6 +453,7 @@ class VideoGridPlayer {
   exitFullscreen() {
     if (this.fullscreenPlayer === null) return;
 
+    window.toomanyvids.log('Exit fullscreen', { index: this.fullscreenPlayer });
     const player = this.players[this.fullscreenPlayer];
     const fullscreenContainer = document.getElementById('fullscreen-container');
 
@@ -442,6 +501,26 @@ class VideoGridPlayer {
     return array;
   }
 
+  getActivePaths() {
+    return new Set(this.players.map(p => p.videoPath).filter(Boolean));
+  }
+
+  getAvailableVideos(excludeIndex) {
+    const activePaths = this.getActivePaths();
+    const excluded = this.players[excludeIndex]?.videoPath;
+    const available = this.videoPool.filter(v => v.path !== excluded && !activePaths.has(v.path));
+    if (available.length === 0) {
+      return this.videoPool.filter(v => v.path !== excluded);
+    }
+    return available;
+  }
+
+  getAvailableVideo(excludeIndex) {
+    const available = this.getAvailableVideos(excludeIndex);
+    if (available.length === 0) return null;
+    return available[Math.floor(Math.random() * available.length)];
+  }
+
   loadSingleVideo(player, videoData, loop, mute) {
     const video = player.video;
     const cell = player.element;
@@ -469,7 +548,9 @@ class VideoGridPlayer {
     player.videoSize = size;
 
     video.play().then(() => {
-    }).catch(() => {
+      window.toomanyvids.debug('Autoplay started', { index: player.index, path: filePath });
+    }).catch((err) => {
+      window.toomanyvids.warn('Autoplay prevented', { index: player.index, path: filePath, error: err.name });
       loading.style.display = 'none';
       titleEl.textContent = 'Click to play: ' + title;
       titleEl.style.opacity = '1';
@@ -493,11 +574,13 @@ class VideoGridPlayer {
   }
 
   reshuffle() {
+    window.toomanyvids.log('Reshuffle triggered');
     window.toomanyvids.reshuffle();
   }
 
   togglePause() {
     this.isPaused = !this.isPaused;
+    window.toomanyvids.log('Toggle pause', { paused: this.isPaused });
     const btn = document.getElementById('btn-pause');
 
     this.players.forEach(player => {
@@ -514,6 +597,7 @@ class VideoGridPlayer {
 
   toggleMute() {
     this.isMuted = !this.isMuted;
+    window.toomanyvids.log('Toggle mute', { muted: this.isMuted });
     const btn = document.getElementById('btn-mute');
 
     this.players.forEach(player => {
@@ -531,11 +615,29 @@ class VideoGridPlayer {
   }
 
   showError(message) {
+    window.toomanyvids.error('Error dialog shown', { message });
     this.errorMessage.textContent = message;
     this.errorModal.classList.add('visible');
   }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  window.player = new VideoGridPlayer();
+  window.toomanyvids.log('DOMContentLoaded fired');
+  try {
+    window.player = new VideoGridPlayer();
+  } catch (err) {
+    window.toomanyvids.error('VideoGridPlayer constructor failed', { error: err.message, stack: err.stack });
+  }
+});
+
+window.addEventListener('error', (event) => {
+  try {
+    window.toomanyvids.error('Uncaught JS error', { message: event.message, filename: event.filename, lineno: event.lineno, colno: event.colno });
+  } catch (_) {}
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  try {
+    window.toomanyvids.error('Unhandled promise rejection', { reason: String(event.reason) });
+  } catch (_) {}
 });

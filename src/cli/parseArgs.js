@@ -4,6 +4,9 @@
  */
 
 const GRID_PATTERN = /^(\d+)x(\d+)$/i;
+const { getLogger } = require('../logger');
+
+const log = getLogger('cli');
 
 /**
  * Parse grid string into rows and columns
@@ -72,7 +75,7 @@ SUPPORTED FORMATS:
  * @returns {Object} Configuration object
  */
 function parseArgs(argv) {
-  console.log('Raw argv:', argv);
+  log.info('Parsing CLI args', { rawArgv: argv });
   
   // Find where our args start (after electron/node paths)
   let startIdx = 2;
@@ -89,8 +92,6 @@ function parseArgs(argv) {
     arg !== '.'
   );
   
-  console.log('Parsed args:', args);
-
   const config = {
     dirs: [],
     grid: null,
@@ -157,15 +158,17 @@ function parseArgs(argv) {
     }
   }
 
-  // Validate required arguments
   if (config.dirs.length === 0) {
+    log.error('No directories specified');
     throw new Error('At least one directory is required (--dirs <dir1> [dir2...])');
   }
 
   if (!config.grid) {
+    log.error('No grid specified');
     throw new Error('Grid layout is required (--grid ROWSxCOLS)');
   }
 
+  log.info('Config valid', config);
   return config;
 }
 

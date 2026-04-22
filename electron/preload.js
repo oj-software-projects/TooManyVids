@@ -3,8 +3,13 @@
  * Exposes safe IPC methods to the renderer
  */
 
-console.log('Preload script loaded');
 const { contextBridge, ipcRenderer } = require('electron');
+
+const _log = (level, message, meta) => {
+  try {
+    ipcRenderer.send('log', { level, message, meta: meta ?? undefined });
+  } catch (_) {}
+};
 
 contextBridge.exposeInMainWorld('toomanyvids', {
   onConfig: (callback) => {
@@ -27,7 +32,8 @@ contextBridge.exposeInMainWorld('toomanyvids', {
     return ipcRenderer.invoke('get-screen-info');
   },
 
-  log: (message) => {
-    ipcRenderer.send('log', message);
-  }
+  log: (message, meta) => _log('INFO', message, meta),
+  warn: (message, meta) => _log('WARN', message, meta),
+  error: (message, meta) => _log('ERROR', message, meta),
+  debug: (message, meta) => _log('DEBUG', message, meta)
 });

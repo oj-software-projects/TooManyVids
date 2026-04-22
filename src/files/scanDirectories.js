@@ -5,6 +5,9 @@
 
 const fs = require('fs/promises');
 const path = require('path');
+const { getLogger } = require('../logger');
+
+const log = getLogger('scanner');
 
 /**
  * Supported video file extensions
@@ -47,10 +50,12 @@ async function scanDirectory(dirPath) {
     const stat = await fs.stat(resolvedPath);
 
     if (!stat.isDirectory()) {
+      log.warn('Not a directory, skipping', { dirPath });
       return videos;
     }
 
     const entries = await fs.readdir(resolvedPath, { withFileTypes: true });
+    log.debug('Scanning directory', { dirPath: resolvedPath, entryCount: entries.length });
 
     for (const entry of entries) {
       const fullPath = path.join(resolvedPath, entry.name);
@@ -64,11 +69,14 @@ async function scanDirectory(dirPath) {
       }
     }
   } catch (err) {
-    // Silently skip directories we can't access
     if (err.code !== 'ENOENT' && err.code !== 'EACCES') {
+      log.error('Scan directory error', { dirPath, error: err.message });
       throw err;
     }
+    log.warn('Cannot access directory', { dirPath, code: err.code });
   }
+
+  log.info('Directory scan complete', { dirPath, videoCount: videos.length });
 
   return videos;
 }
@@ -79,6 +87,7 @@ async function scanDirectory(dirPath) {
  * @returns {Promise<string[]>} Combined array of video file paths
  */
 async function scanDirectories(directories) {
+  log.info('Scanning directories', { directories });
   const allVideos = [];
 
   for (const dir of directories) {
@@ -86,8 +95,9 @@ async function scanDirectories(directories) {
     allVideos.push(...videos);
   }
 
-  // Remove duplicates
-  return [...new Set(allVideos)];
+  const unique = [...new Set(allVideos)];
+  log.info('All directories scanned', { totalFound: allVideos.length, uniqueCount: unique.length });
+  return unique;
 }
 
 /**

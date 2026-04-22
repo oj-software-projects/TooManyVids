@@ -146,6 +146,60 @@
       margin-bottom: 8px;
     }
 
+    .video-cell .cell-buttons {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    .video-cell .cell-buttons button {
+      flex: 1;
+      padding: 4px 6px;
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 3px;
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+      font-size: 11px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .video-cell .cell-buttons button:hover {
+      background: rgba(255,255,255,0.25);
+    }
+
+    .video-cell .pick-list {
+      max-height: 120px;
+      overflow-y: auto;
+      background: rgba(0,0,0,0.85);
+      border-radius: 4px;
+      margin-bottom: 6px;
+    }
+
+    .video-cell .pick-item {
+      padding: 4px 8px;
+      color: #ccc;
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+    }
+
+    .video-cell .pick-item:hover {
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+    }
+
+    .video-cell .pick-list::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .video-cell .pick-list::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.3);
+      border-radius: 2px;
+    }
+
     .video-cell .seek-bar-container {
       display: flex;
       align-items: center;

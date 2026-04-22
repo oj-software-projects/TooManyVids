@@ -9,6 +9,9 @@ const fs = require('fs');
 const http = require('http');
 const { parseArgs } = require('../src/cli/parseArgs');
 const { scanDirectories } = require('../src/files/scanDirectories');
+const { getLogger } = require('../src/logger');
+
+const log = getLogger('main');
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport,Vulkan');
@@ -16,6 +19,8 @@ app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,UseCh
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('num-raster-threads', '4');
+
+log.info('App starting', { platform: process.platform, arch: process.arch, electronVersion: process.versions.electron });
 
 let mainWindow = null;
 let config = null;
@@ -46,6 +51,7 @@ function startHttpServer() {
     const videoId = url.searchParams.get('id');
 
     if (!videoId || !videoPathMap.has(videoId)) {
+      log.warn('HTTP 404 - unknown video id', { videoId, url: req.url });
       res.writeHead(404);
       res.end('Not found');
       return;
@@ -74,6 +80,8 @@ function startHttpServer() {
         }
         const chunkSize = end - start + 1;
 
+        log.debug('HTTP range request', { videoId, start, end, chunkSize, mimeType });
+
         res.writeHead(206, {
           'Content-Range': `bytes ${start}-${end}/${fileSize}`,
           'Accept-Ranges': 'bytes',
@@ -87,6 +95,8 @@ function startHttpServer() {
         const end = Math.min(MAX_INITIAL, fileSize) - 1;
         const chunkSize = end + 1;
 
+        log.debug('HTTP initial request', { videoId, chunkSize, fileSize, mimeType });
+
         res.writeHead(206, {
           'Content-Range': `bytes 0-${end}/${fileSize}`,
           'Accept-Ranges': 'bytes',
@@ -97,19 +107,24 @@ function startHttpServer() {
         fs.createReadStream(filePath, { start: 0, end }).pipe(res);
       }
     } catch (err) {
+      log.error('HTTP serve error', { videoId, filePath, error: err.message });
       res.writeHead(404);
       res.end('File not found');
     }
   });
 
-  httpServer.listen(HTTP_PORT, '127.0.0.1');
+  httpServer.listen(HTTP_PORT, '127.0.0.1', () => {
+    log.info('HTTP server started', { port: HTTP_PORT });
+  });
 }
 
 function parseCliArgs() {
   try {
     config = parseArgs(process.argv);
+    log.info('CLI args parsed', { dirs: config.dirs, grid: config.grid, shuffle: config.shuffle, loop: config.loop, mute: config.mute });
     return config;
   } catch (err) {
+    log.error('CLI parse error', { error: err.message });
     console.error(`Error: ${err.message}`);
     console.error('\nUsage: electron . --dirs <dir1> [dir2...] --grid <ROWSxCOLS>');
     return null;
@@ -119,6 +134,8 @@ function parseCliArgs() {
 async function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.size;
+
+  log.info('Creating window', { screenWidth, screenHeight });
 
   mainWindow = new BrowserWindow({
     width: Math.floor(screenWidth * 0.9),
@@ -133,9 +150,20 @@ async function createWindow() {
   });
 
   mainWindow.webContents.on('did-finish-load', async () => {
-    videos = await scanDirectories(config.dirs);
+    log.info('Renderer did-finish-load');
+
+    try {
+      videos = await scanDirectories(config.dirs);
+    } catch (err) {
+      log.error('scanDirectories failed', { error: err.message, stack: err.stack });
+      mainWindow.webContents.send('error', 'Failed to scan directories: ' + err.message);
+      return;
+    }
+
+    log.info('Videos scanned', { count: videos.length });
 
     if (videos.length === 0) {
+      log.warn('No video files found', { dirs: config.dirs });
       mainWindow.webContents.send('error', 'No video files found');
       return;
     }
@@ -164,7 +192,9 @@ async function createWindow() {
       try {
         const stat = fs.statSync(videoPath);
         fileSize = stat.size;
-      } catch (err) {}
+      } catch (err) {
+        log.warn('Cannot stat video file', { path: videoPath, error: err.message });
+      }
 
       return {
         url: `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`,
@@ -172,6 +202,8 @@ async function createWindow() {
         size: fileSize
       };
     });
+
+    log.info('Sending config to renderer', { cellCount, videoCount: videoData.length });
 
     mainWindow.webContents.send('config', {
       grid: config.grid,
@@ -183,7 +215,16 @@ async function createWindow() {
     });
   });
 
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    log.error('Renderer process gone', { reason: details.reason, exitCode: details.exitCode });
+  });
+
+  mainWindow.webContents.on('unresponsive', () => {
+    log.warn('Renderer unresponsive');
+  });
+
   mainWindow.on('closed', () => {
+    log.info('Window closed');
     mainWindow = null;
   });
 
@@ -192,10 +233,13 @@ async function createWindow() {
   }
 
   await mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  log.info('Window loaded');
 }
 
 function handleReshuffle() {
   if (!mainWindow || videos.length === 0) return;
+
+  log.info('Reshuffling videos');
 
   const cellCount = config.grid.rows * config.grid.cols;
 
@@ -241,19 +285,40 @@ function setupIpc() {
   });
 
   ipcMain.on('reshuffle', () => handleReshuffle());
-  ipcMain.on('log', (event, message) => console.log('[Renderer]', message));
+
+  ipcMain.on('log', (event, data) => {
+    const logger = getLogger('renderer');
+    if (typeof data === 'object' && data.level) {
+      const method = data.level.toLowerCase();
+      if (logger[method]) {
+        logger[method](data.message, data.meta);
+      } else {
+        logger.info(data.message, data.meta);
+      }
+    } else {
+      logger.info(String(data));
+    }
+  });
 }
 
 app.whenReady().then(async () => {
   const parsedConfig = parseCliArgs();
   if (!parsedConfig) {
+    log.error('No valid config, quitting');
     app.quit();
     return;
   }
 
   startHttpServer();
   setupIpc();
-  await createWindow();
+
+  try {
+    await createWindow();
+  } catch (err) {
+    log.error('createWindow failed', { error: err.message, stack: err.stack });
+    app.quit();
+    return;
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -263,6 +328,15 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  log.info('All windows closed, quitting');
   if (httpServer) httpServer.close();
   app.quit();
+});
+
+process.on('uncaughtException', (err) => {
+  log.error('Uncaught exception', { error: err.message, stack: err.stack });
+});
+
+process.on('unhandledRejection', (reason) => {
+  log.error('Unhandled rejection', { reason: String(reason) });
 });
