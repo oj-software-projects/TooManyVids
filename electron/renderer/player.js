@@ -165,7 +165,64 @@ class VideoGridPlayer {
       loading.style.display = 'none';
     });
 
+    let blackCheckTimer = null;
+    let blackCheckAttempts = 0;
+
+    const attemptBlackDetect = () => {
+      if (player.usingTranscode || !player.transcodeUrl || player._blackCheckDone) return;
+      if (video.paused || video.ended) return;
+      blackCheckAttempts++;
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 4;
+        canvas.height = 4;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, 4, 4);
+        const data = ctx.getImageData(0, 0, 4, 4).data;
+        let nonBlack = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i] > 5 || data[i + 1] > 5 || data[i + 2] > 5) {
+            nonBlack++;
+          }
+        }
+        if (nonBlack > 0) {
+          player._blackCheckDone = true;
+          return;
+        }
+        if (blackCheckAttempts < 4) {
+          blackCheckTimer = setTimeout(attemptBlackDetect, 1000);
+          return;
+        }
+        window.toomanyvids.warn('Black frame confirmed, switching to transcode', { index, attempts: blackCheckAttempts, path: player.videoPath });
+        player.usingTranscode = true;
+        player._blackCheckDone = true;
+        const wasMuted = video.muted;
+        const wasLoop = video.loop;
+        video.src = player.transcodeUrl;
+        video.muted = wasMuted;
+        video.loop = wasLoop;
+        loading.style.display = 'block';
+        video.play().catch(() => {
+          loading.style.display = 'none';
+        });
+      } catch (_) {
+        if (blackCheckAttempts < 4) {
+          blackCheckTimer = setTimeout(attemptBlackDetect, 1000);
+        } else {
+          player._blackCheckDone = true;
+        }
+      }
+    };
+
+    video.addEventListener('timeupdate', () => {
+      if (player._blackCheckDone || player.usingTranscode || !player.transcodeUrl) return;
+      if (video.currentTime > 0.5 && !blackCheckTimer) {
+        blackCheckTimer = setTimeout(attemptBlackDetect, 500);
+      }
+    });
+
     video.addEventListener('error', () => {
+      clearTimeout(blackCheckTimer);
       loading.style.display = 'none';
       const ext = player.videoExt || '';
       const videoError = video.error;
@@ -174,12 +231,13 @@ class VideoGridPlayer {
       window.toomanyvids.error('Video error', { index, ext, errCode, errMsg, src: player.videoUrl });
 
       if (player.transcodeUrl && !player.usingTranscode) {
-        window.toomanyvids.info('Retrying with transcode', { index, path: player.videoPath });
+        window.toomanyvids.log('Retrying with transcode', { index, path: player.videoPath });
         player.usingTranscode = true;
+        player._blackCheckDone = true;
         video.src = player.transcodeUrl;
         loading.style.display = 'block';
         video.play().then(() => {
-          window.toomanyvids.info('Transcode playback started', { index });
+          window.toomanyvids.log('Transcode playback started', { index });
         }).catch(() => {
           loading.style.display = 'none';
           titleEl.textContent = 'Cannot play: .' + ext.toUpperCase();
@@ -213,7 +271,9 @@ class VideoGridPlayer {
 
     video.addEventListener('playing', () => {
       loading.style.display = 'none';
-      this.detectBlackFrame(player, video, cell, titleEl, infoEl, loading);
+      if (!player._blackCheckDone && !player.usingTranscode && player.transcodeUrl && !blackCheckTimer) {
+        blackCheckTimer = setTimeout(attemptBlackDetect, 1500);
+      }
     });
 
     video.addEventListener('ended', () => {
@@ -664,6 +724,7 @@ class VideoGridPlayer {
     player.rotation = 0;
     player.usingTranscode = false;
     player._blackCheckDone = false;
+    player._blackCheckTimer = null;
     video.style.transform = '';
 
     player.videoUrl = url;
@@ -748,46 +809,6 @@ class VideoGridPlayer {
     window.toomanyvids.error('Error dialog shown', { message });
     this.errorMessage.textContent = message;
     this.errorModal.classList.add('visible');
-  }
-
-  detectBlackFrame(player, video, cell, titleEl, infoEl, loading) {
-    if (player.usingTranscode || !player.transcodeUrl) return;
-    if (player._blackCheckDone) return;
-    player._blackCheckDone = true;
-
-    const checkDelay = 1500;
-    const checkAfterPlay = setTimeout(() => {
-      try {
-        if (video.paused || video.ended) return;
-        const canvas = document.createElement('canvas');
-        canvas.width = 4;
-        canvas.height = 4;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, 4, 4);
-        const data = ctx.getImageData(0, 0, 4, 4).data;
-        let nonBlack = 0;
-        for (let i = 0; i < data.length; i += 4) {
-          if (data[i] > 5 || data[i + 1] > 5 || data[i + 2] > 5) {
-            nonBlack++;
-          }
-        }
-        if (nonBlack === 0) {
-          window.toomanyvids.warn('Black frame detected, retrying transcode', { index: player.index, path: player.videoPath });
-          player.usingTranscode = true;
-          const wasMuted = video.muted;
-          const wasLoop = video.loop;
-          video.src = player.transcodeUrl;
-          video.muted = wasMuted;
-          video.loop = wasLoop;
-          loading.style.display = 'block';
-          video.play().catch(() => {
-            loading.style.display = 'none';
-          });
-        }
-      } catch (_) {}
-    }, checkDelay);
-
-    video.addEventListener('pause', () => { clearTimeout(checkAfterPlay); }, { once: true });
   }
 
   showToast(message) {
