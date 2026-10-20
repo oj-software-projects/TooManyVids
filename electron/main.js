@@ -11,7 +11,7 @@ const http = require('http');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 const { parseArgs } = require('../src/cli/parseArgs');
-const { scanDirectories, selectVideos } = require('../src/files/scanDirectories');
+const { scanDirectories, scanDirectory, selectVideos } = require('../src/files/scanDirectories');
 const { pickMode, TRANSCODE_FALLBACK_EXTENSIONS } = require('../src/media/mode');
 const { DEFAULT_CONFIG, mergeConfig, sanitizeSettings, readConfig, writeConfig } = require('../src/config/config');
 const { getLogger } = require('../src/logger');
@@ -564,6 +564,22 @@ function setupIpc() {
   ipcMain.handle('start-wall', async (event, settings) => {
     if (!isTrustedSender(event)) return { error: 'Forbidden' };
     return startWall(settings || {});
+  });
+
+  ipcMain.handle('scan-folders', async (event, dirs) => {
+    if (!isTrustedSender(event) || !Array.isArray(dirs)) return { counts: [] };
+    const list = [...new Set(dirs.filter((d) => typeof d === 'string' && d.trim()))].slice(0, 50);
+    const counts = await Promise.all(list.map(async (dir) => {
+      try {
+        const stat = await fs.promises.stat(dir);
+        if (!stat.isDirectory()) return { dir, count: null, error: 'not a folder' };
+        const found = await scanDirectory(dir);
+        return { dir, count: found.length };
+      } catch (err) {
+        return { dir, count: null, error: err.code === 'ENOENT' ? 'not found' : err.message };
+      }
+    }));
+    return { counts };
   });
 
   ipcMain.handle('pick-directories', async (event) => {

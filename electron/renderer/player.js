@@ -57,6 +57,7 @@ class VideoGridPlayer {
     this.errorModal = document.getElementById('error-modal');
 
     this.dirs = [];
+    this.folderCounts = new Map();
     this.lobbyStatusEl = document.getElementById('lobby-status');
     this.hudTimer = null;
 
@@ -84,8 +85,8 @@ class VideoGridPlayer {
         case 'escape':
           if (this.fullscreenPlayer) {
             this.exitFullscreen();
-          } else {
-            window.close();
+          } else if (document.body.classList.contains('mode-wall')) {
+            this.showLobby();
           }
           break;
         case 'r':
@@ -107,6 +108,7 @@ class VideoGridPlayer {
       this.errorModal.classList.remove('visible');
     });
 
+    document.getElementById('btn-setup').addEventListener('click', () => this.showLobby());
     document.getElementById('btn-reshuffle').addEventListener('click', () => this.reshuffle());
     document.getElementById('btn-pause').addEventListener('click', () => this.togglePause());
     document.getElementById('btn-mute').addEventListener('click', () => this.toggleMute());
@@ -190,6 +192,29 @@ class VideoGridPlayer {
     this.lobbyStatusEl.textContent = message || '';
   }
 
+  folderCountLabel(dir) {
+    if (!this.folderCounts.has(dir)) return { text: '\u2026', title: 'Scanning' };
+    const entry = this.folderCounts.get(dir);
+    if (entry.count === null) return { text: 'not found', bad: true, title: entry.error || 'Folder is not accessible' };
+    return { text: entry.count === 1 ? '1 video' : `${entry.count} videos` };
+  }
+
+  async refreshCounts(dirs) {
+    const targets = [...new Set(dirs)].filter(Boolean);
+    if (targets.length === 0) return;
+
+    for (const dir of targets) this.folderCounts.delete(dir);
+    this.renderDirs();
+
+    try {
+      const { counts } = await window.toomanyvids.countVideos(targets);
+      for (const entry of counts || []) this.folderCounts.set(entry.dir, entry);
+    } catch (err) {
+      window.toomanyvids.warn('Folder count failed', { error: err.message });
+    }
+    this.renderDirs();
+  }
+
   renderDirs() {
     this.dirListEl.innerHTML = '';
     if (this.dirs.length === 0) {
@@ -205,12 +230,19 @@ class VideoGridPlayer {
       pathEl.className = 'dir-path';
       pathEl.textContent = dir;
       pathEl.title = dir;
+
+      const count = this.folderCountLabel(dir);
+      const countEl = document.createElement('span');
+      countEl.className = count.bad ? 'dir-count bad' : 'dir-count';
+      countEl.textContent = count.text;
+      if (count.title) countEl.title = count.title;
+
       const btn = document.createElement('button');
       btn.className = 'dir-remove';
       btn.textContent = '\u00d7';
       btn.title = 'Remove folder';
       btn.dataset.path = dir;
-      li.append(pathEl, btn);
+      li.append(pathEl, countEl, btn);
       this.dirListEl.appendChild(li);
     }
   }
@@ -235,11 +267,16 @@ class VideoGridPlayer {
   async addDirs() {
     try {
       const result = await window.toomanyvids.pickDirectories();
+      const added = [];
       for (const dir of result?.dirs || []) {
-        if (!this.dirs.includes(dir)) this.dirs.push(dir);
+        if (!this.dirs.includes(dir)) {
+          this.dirs.push(dir);
+          added.push(dir);
+        }
       }
       this.renderDirs();
       this.setLobbyStatus('');
+      await this.refreshCounts(added);
     } catch (err) {
       this.setLobbyStatus('Folder picker failed: ' + err.message);
     }
@@ -284,6 +321,7 @@ class VideoGridPlayer {
     this.updateGridLabel();
     this.setLobbyStatus('');
     this.showLobby();
+    this.refreshCounts(this.dirs);
   }
 
   showLobby() {

@@ -538,6 +538,14 @@
       text-align: left;
     }
 
+    #dir-list .dir-count {
+      color: #888;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    #dir-list .dir-count.bad { color: #d9776f; }
+
     #dir-list .dir-remove {
       padding: 2px 8px;
       font-size: 14px;
@@ -686,7 +694,7 @@
         <button id="btn-start">Start Wall</button>
       </footer>
 
-      <p class="lobby-hint">Press <kbd>Tab</kbd> while playing to come back here. Settings are saved on start.</p>
+      <p class="lobby-hint">Press <kbd>Tab</kbd>, <kbd>Esc</kbd> or the <em>Setup</em> button while playing to come back here. Settings are saved on start.</p>
     </div>
   </section>
 
@@ -694,6 +702,7 @@
     <div id="toolbar">
       <span class="title">TooManyVids</span>
       <span class="status" id="status">Loading...</span>
+      <button id="btn-setup" title="Back to setup (Esc or Tab)">Setup</button>
       <button id="btn-reshuffle" title="Reshuffle (R)">Reshuffle</button>
       <button id="btn-pause" title="Pause/Resume (P)">Pause</button>
       <button id="btn-mute" title="Toggle Mute (M)">Unmute</button>
@@ -702,11 +711,12 @@
   </div>
 
   <div id="shortcuts">
+    <kbd>Tab</kbd> or <kbd>Esc</kbd> Back to setup &nbsp;|&nbsp;
     <kbd>R</kbd> Reshuffle &nbsp;|&nbsp;
     <kbd>P</kbd> Pause/Resume &nbsp;|&nbsp;
     <kbd>M</kbd> Mute/Unmute &nbsp;|&nbsp;
     <kbd>?</kbd> Toggle Help &nbsp;|&nbsp;
-    <kbd>Q</kbd> or <kbd>Esc</kbd> Quit
+    <kbd>Q</kbd> Quit
   </div>
 
   <div id="error-modal">

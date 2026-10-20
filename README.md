@@ -115,12 +115,14 @@ Settings chosen in the setup screen are stored in `config.json` under Electron's
 
 | Key | Action |
 |-----|--------|
-| `Tab` | Back to the setup screen (pauses playback) |
+| `Tab` / `Esc` | Back to the setup screen (pauses playback; `Esc` leaves fullscreen first) |
 | `R` | Reshuffle and restart videos |
 | `P` | Pause/Resume all videos |
 | `M` | Toggle mute on all videos |
 | `?` | Show keyboard shortcuts overlay |
-| `Q` / `Esc` | Quit application |
+| `Q` | Quit application |
+
+The `Setup` toolbar button does the same as `Tab`. The toolbar hides after 2 seconds of inactivity; move the mouse to bring it back.
 
 ## Supported Video Formats
 

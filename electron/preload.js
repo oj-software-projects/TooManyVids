@@ -24,6 +24,10 @@ contextBridge.exposeInMainWorld('toomanyvids', {
     return ipcRenderer.invoke('pick-directories');
   },
 
+  countVideos: (dirs) => {
+    return ipcRenderer.invoke('scan-folders', dirs);
+  },
+
   onConfig: (callback) => {
     ipcRenderer.on('config', (event, data) => callback(data));
   },

@@ -56,12 +56,12 @@ EXAMPLES:
   npm start -- --dirs ./media --grid 4x2 --shuffle
 
 KEYBINDINGS:
-  Tab     Back to the setup screen
+  Tab/Esc Back to the setup screen (Esc leaves fullscreen first)
   R       Reshuffle and restart videos
   P       Pause/Resume all videos
   M       Toggle mute on all videos
   ?       Show keyboard shortcuts
-  Q/Esc   Quit application
+  Q       Quit application
 
 SUPPORTED FORMATS:
   .mp4, .mkv, .avi, .mov, .webm, .flv, .wmv, .m4v, .mpg, .mpeg, .3gp, .ogv
