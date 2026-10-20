@@ -181,7 +181,7 @@ toomanyvids/
 
 1. **Settings**: The saved `config.json` is loaded; CLI arguments override it. Without CLI folders the renderer shows the setup screen, otherwise the wall starts immediately
 2. **Directory Scanning**: Recursively scans directories for video files (skips macOS `._` forks and files under 1 MB) when the wall starts
-3. **HTTP Server**: A random loopback port serves video files; every URL carries a per-run token so other local pages cannot read them
+3. **HTTP Servers**: Sixteen loopback ports serve video files, so the browser's limit of 6 concurrent HTTP/1.1 connections per origin does not starve cells with long-lived ffmpeg streams; every URL carries a per-run token so other local pages cannot read them
 4. **Grid Rendering**: CSS Grid layout displays videos in the configured arrangement
 5. **Video Playback**: HTML5 video elements play videos simultaneously; unsupported containers are remuxed or transcoded by ffmpeg on demand
 
@@ -245,6 +245,11 @@ Without an app icon, electron-builder falls back to the default Electron icon.
 - Ensure video files are in supported formats
 - Check file permissions
 - Try running with `--dev` flag to see console errors
+
+### "Video stalled" in the log
+
+- Before the first frame this is normal for `.mkv`/`.avi`/transcode cells: the app waits for ffmpeg to produce data. It is logged once per cell at DEBUG level (`Waiting for first frame`).
+- `WARN [renderer] Video stalled` after playback started means the stream really dried up; check that ffmpeg is installed and not saturated, and try a smaller grid.
 
 ### Grid not displaying correctly
 

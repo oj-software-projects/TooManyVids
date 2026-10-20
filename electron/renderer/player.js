@@ -403,6 +403,9 @@ class VideoGridPlayer {
         _blackCheckDone: false,
         _blackAttempts: 0,
         _blackTimer: null,
+        videoStarted: false,
+        _startupStallLogged: false,
+        _lastStallWarn: 0,
         rotation: 0
       });
     }
@@ -569,12 +572,27 @@ class VideoGridPlayer {
 
     video.addEventListener('stalled', () => {
       const p = getPlayer();
-      window.toomanyvids.warn('Video stalled', { index, src: p?.videoUrl });
       loading.style.display = 'block';
+      if (!p) return;
+      const meta = { index, src: p.videoUrl, readyState: video.readyState };
+      if (!p.videoStarted) {
+        // Expected while an ffmpeg pipe warms up; log once per load instead of spamming.
+        if (!p._startupStallLogged) {
+          p._startupStallLogged = true;
+          window.toomanyvids.debug('Waiting for first frame', meta);
+        }
+        return;
+      }
+      const now = Date.now();
+      if (now - p._lastStallWarn > 30000) {
+        p._lastStallWarn = now;
+        window.toomanyvids.warn('Video stalled', meta);
+      }
     });
 
     video.addEventListener('playing', () => {
       const p = getPlayer();
+      if (p) p.videoStarted = true;
       loading.style.display = 'none';
       if (p && !p._blackCheckDone && !p.usingFallback && p.fallbackUrl && !p._blackTimer) {
         p._blackTimer = setTimeout(attemptBlackDetect, 1500);
@@ -595,6 +613,8 @@ class VideoGridPlayer {
       const sep = baseUrl.includes('?') ? '&' : '?';
       const wasMuted = video.muted;
       const wasLoop = video.loop;
+      p.videoStarted = false;
+      p._startupStallLogged = false;
       video.src = baseUrl + sep + 't=' + Math.floor(targetTime);
       video.muted = wasMuted;
       video.loop = wasLoop;
@@ -925,6 +945,8 @@ class VideoGridPlayer {
     player._blackCheckDone = false;
     player._blackAttempts = 0;
     player._blackTimer = null;
+    player.videoStarted = false;
+    player._startupStallLogged = false;
     player.rotation = 0;
     player.element.classList.add('video-cell-empty');
     player.element.querySelector('.loading').style.display = 'none';
@@ -965,6 +987,9 @@ class VideoGridPlayer {
     player._blackCheckDone = false;
     player._blackAttempts = 0;
     player._blackTimer = null;
+    player.videoStarted = false;
+    player._startupStallLogged = false;
+    player._lastStallWarn = 0;
   }
 
   getActivePaths() {

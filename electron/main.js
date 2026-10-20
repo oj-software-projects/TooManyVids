@@ -89,8 +89,6 @@ function sendLobby() {
   });
 }
 
-let httpPort = 0;
-let httpServer = null;
 let videoPathMap = new Map();
 // Loopback URLs are only reachable with this token, so other local pages cannot read the videos.
 const sessionToken = crypto.randomBytes(16).toString('hex');
@@ -252,57 +250,74 @@ function serveRemuxedPipe(filePath, res, reencode, seekTime) {
   }
 }
 
-function startHttpServer() {
-  httpServer = http.createServer((req, res) => {
-    const url = new URL(req.url, 'http://127.0.0.1');
-    const videoId = url.searchParams.get('id');
-    const requestedMode = url.searchParams.get('mode');
-    const seekTime = parseFloat(url.searchParams.get('t') || '0') || 0;
+function handleVideoRequest(req, res) {
+  const url = new URL(req.url, 'http://127.0.0.1');
+  const videoId = url.searchParams.get('id');
+  const requestedMode = url.searchParams.get('mode');
+  const seekTime = parseFloat(url.searchParams.get('t') || '0') || 0;
 
-    if (url.searchParams.get('token') !== sessionToken) {
-      log.warn('HTTP 403 - bad token', { pathname: url.pathname });
-      res.writeHead(403);
-      res.end('Forbidden');
-      return;
+  if (url.searchParams.get('token') !== sessionToken) {
+    log.warn('HTTP 403 - bad token', { pathname: url.pathname });
+    res.writeHead(403);
+    res.end('Forbidden');
+    return;
+  }
+
+  if (!videoId || !videoPathMap.has(videoId)) {
+    log.warn('HTTP 404 - unknown video id', { videoId, pathname: url.pathname });
+    res.writeHead(404);
+    res.end('Not found');
+    return;
+  }
+
+  const filePath = videoPathMap.get(videoId);
+  const ext = path.extname(filePath).toLowerCase();
+  const useExplicitMode = ffmpegAvailable && (requestedMode === 'remux' || requestedMode === 'transcode');
+  const mode = useExplicitMode ? requestedMode : pickMode(ext, ffmpegAvailable);
+
+  try {
+    if (mode !== 'direct') {
+      log.info('Serving via ffmpeg pipe', { videoId, ext, mode, seekTime });
+      serveRemuxedPipe(filePath, res, mode === 'transcode', seekTime);
+    } else {
+      log.debug('Serving direct', { videoId, ext });
+      serveDirect(filePath, req.headers.range, res);
     }
-
-    if (!videoId || !videoPathMap.has(videoId)) {
-      log.warn('HTTP 404 - unknown video id', { videoId, pathname: url.pathname });
-      res.writeHead(404);
-      res.end('Not found');
-      return;
+  } catch (err) {
+    log.error('HTTP serve error', { videoId, filePath, error: err.message });
+    if (!res.headersSent) {
+      res.writeHead(500);
+      res.end('Server error');
     }
+  }
+}
 
-    const filePath = videoPathMap.get(videoId);
-    const ext = path.extname(filePath).toLowerCase();
-    const useExplicitMode = ffmpegAvailable && (requestedMode === 'remux' || requestedMode === 'transcode');
-    const mode = useExplicitMode ? requestedMode : pickMode(ext, ffmpegAvailable);
+// Chromium allows only 6 concurrent HTTP/1.1 connections per origin (host:port).
+// Remux/transcode pipes stay open for the whole video, so with one port later
+// cells would starve and fire 'stalled'. Spread cells over several loopback ports.
+const HTTP_PORT_COUNT = 16;
 
-    try {
-      if (mode !== 'direct') {
-        log.info('Serving via ffmpeg pipe', { videoId, ext, mode, seekTime });
-        serveRemuxedPipe(filePath, res, mode === 'transcode', seekTime);
-      } else {
-        log.debug('Serving direct', { videoId, ext });
-        serveDirect(filePath, req.headers.range, res);
-      }
-    } catch (err) {
-      log.error('HTTP serve error', { videoId, filePath, error: err.message });
-      if (!res.headersSent) {
-        res.writeHead(500);
-        res.end('Server error');
-      }
-    }
-  });
+let httpPorts = [];
+let httpServers = [];
 
+function listenOnLoopback() {
   return new Promise((resolve, reject) => {
-    httpServer.once('error', reject);
-    httpServer.listen(0, '127.0.0.1', () => {
-      httpPort = httpServer.address().port;
-      log.info('HTTP server started', { port: httpPort });
-      resolve();
+    const server = http.createServer(handleVideoRequest);
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      httpPorts.push(server.address().port);
+      resolve(server);
     });
   });
+}
+
+async function startHttpServer() {
+  httpServers = await Promise.all(Array.from({ length: HTTP_PORT_COUNT }, listenOnLoopback));
+  log.info('HTTP servers started', { count: httpServers.length, ports: httpPorts });
+}
+
+function portForIndex(index) {
+  return httpPorts[index % httpPorts.length] ?? httpPorts[0];
 }
 
 function parseCliArgs() {
@@ -377,7 +392,7 @@ function toVideoEntry(videoPath, idPrefix, index) {
 
   const ext = path.extname(videoPath).toLowerCase();
   const mode = pickMode(ext, ffmpegAvailable);
-  const url = `http://127.0.0.1:${httpPort}/video?id=${id}&token=${sessionToken}`;
+  const url = `http://127.0.0.1:${portForIndex(index)}/video?id=${id}&token=${sessionToken}`;
   const fallbackUrl = ffmpegAvailable && mode !== 'transcode' && TRANSCODE_FALLBACK_EXTENSIONS.has(ext)
     ? `${url}&mode=transcode`
     : null;
@@ -650,7 +665,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   log.info('All windows closed, quitting');
-  if (httpServer) httpServer.close();
+  httpServers.forEach((server) => server.close());
   app.quit();
 });
 
