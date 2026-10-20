@@ -6,7 +6,7 @@ A single-window multi-video player with configurable grid layout. Built with Ele
 
 ## Features
 
-- **Setup Screen**: Pick folders, grid and playback options without the terminal; settings are remembered
+- **Setup Screen**: Pick folders, grid and playback options without the terminal; click an existing folder path to change it in place; settings are remembered
 - **Single Window**: One application window displaying multiple videos in a grid
 - **Configurable Grid**: Any layout (2x2, 3x3, 4x2, etc.)
 - **Directory Scanning**: Recursively scan multiple directories for videos

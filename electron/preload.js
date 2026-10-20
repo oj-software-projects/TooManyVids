@@ -20,8 +20,8 @@ contextBridge.exposeInMainWorld('toomanyvids', {
     return ipcRenderer.invoke('start-wall', settings);
   },
 
-  pickDirectories: () => {
-    return ipcRenderer.invoke('pick-directories');
+  pickDirectories: (defaultPath) => {
+    return ipcRenderer.invoke('pick-directories', defaultPath);
   },
 
   countVideos: (dirs) => {

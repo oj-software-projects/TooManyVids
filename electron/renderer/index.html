@@ -569,11 +569,30 @@
 
     #dir-list .dir-path {
       flex: 1;
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
       direction: rtl;
       text-align: left;
+      background: none;
+      border: 0;
+      border-radius: 0;
+      padding: 0;
+      color: #ccc;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    #dir-list .dir-path:hover {
+      color: #fff;
+      text-decoration: underline;
+      background: none;
+    }
+
+    #dir-list .dir-path:focus-visible {
+      outline: 1px solid #4b86f0;
+      outline-offset: 2px;
     }
 
     #dir-list .dir-count {

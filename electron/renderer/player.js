@@ -178,10 +178,14 @@ class VideoGridPlayer {
     this.colsInput.addEventListener('input', () => this.updateGridLabel());
 
     this.dirListEl.addEventListener('click', (e) => {
-      const btn = e.target.closest('.dir-remove');
-      if (!btn) return;
-      this.dirs = this.dirs.filter((dir) => dir !== btn.dataset.path);
-      this.renderDirs();
+      const remove = e.target.closest('.dir-remove');
+      if (remove) {
+        this.dirs = this.dirs.filter((dir) => dir !== remove.dataset.path);
+        this.renderDirs();
+        return;
+      }
+      const change = e.target.closest('.dir-path');
+      if (change) this.changeDir(change.dataset.path);
     });
   }
 
@@ -236,10 +240,12 @@ class VideoGridPlayer {
     }
     for (const dir of this.dirs) {
       const li = document.createElement('li');
-      const pathEl = document.createElement('span');
+      const pathEl = document.createElement('button');
+      pathEl.type = 'button';
       pathEl.className = 'dir-path';
       pathEl.textContent = dir;
-      pathEl.title = dir;
+      pathEl.title = dir + '\nClick to change this folder';
+      pathEl.dataset.path = dir;
 
       const count = this.folderCountLabel(dir);
       const countEl = document.createElement('span');
@@ -272,6 +278,35 @@ class VideoGridPlayer {
     document.querySelectorAll('.preset').forEach((btn) => {
       btn.classList.toggle('active', Number(btn.dataset.rows) === rows && Number(btn.dataset.cols) === cols);
     });
+  }
+
+  async changeDir(oldDir) {
+    try {
+      const result = await window.toomanyvids.pickDirectories(oldDir);
+      const picked = result?.dirs || [];
+      if (picked.length === 0) return;
+      const changed = this.applyDirChange(oldDir, picked);
+      await this.refreshCounts(changed);
+    } catch (err) {
+      this.setLobbyStatus('Folder picker failed: ' + err.message);
+    }
+  }
+
+  /** Replace `oldDir` with the picked folder(s); returns the paths to recount. */
+  applyDirChange(oldDir, picked) {
+    const index = this.dirs.indexOf(oldDir);
+    if (index === -1) return [];
+
+    const [replacement, ...extra] = picked;
+    this.dirs[index] = replacement;
+    for (const dir of extra) {
+      if (!this.dirs.includes(dir)) this.dirs.push(dir);
+    }
+    this.dirs = [...new Set(this.dirs)];
+
+    this.setLobbyStatus('');
+    this.renderDirs();
+    return [replacement, ...extra];
   }
 
   async addDirs() {

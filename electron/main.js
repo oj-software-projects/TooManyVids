@@ -597,12 +597,16 @@ function setupIpc() {
     return { counts };
   });
 
-  ipcMain.handle('pick-directories', async (event) => {
+  ipcMain.handle('pick-directories', async (event, defaultPath) => {
     if (!isTrustedSender(event) || !mainWindow) return { dirs: [] };
-    const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Add video folders',
+    const options = {
+      title: 'Choose video folders',
       properties: ['openDirectory', 'multiSelections']
-    });
+    };
+    if (typeof defaultPath === 'string' && defaultPath.trim()) {
+      options.defaultPath = defaultPath;
+    }
+    const result = await dialog.showOpenDialog(mainWindow, options);
     return { dirs: result.canceled ? [] : result.filePaths };
   });
 
