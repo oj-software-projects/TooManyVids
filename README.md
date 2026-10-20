@@ -16,7 +16,7 @@ A single-window multi-video player with configurable grid layout. Built with Ele
 
 ## Prerequisites
 
-- **Node.js** >= 18
+- **Node.js** >= 22.12
 - **npm** (comes with Node.js)
 - **ffmpeg / ffprobe** (optional): required for `.mkv`, `.avi`, `.flv`, `.wmv`, `.3gp`, `.mpg`, `.mpeg` and the codec fallback for other containers. Without it, only directly playable files work.
 
