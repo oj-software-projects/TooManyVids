@@ -109,7 +109,8 @@ function serveDirect(filePath, range, res) {
   const ext = path.extname(filePath).toLowerCase();
   const mimeType = MIME_TYPES[ext] || 'application/octet-stream';
 
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', 'null');
+  res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Headers', 'Range');
   res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
   res.setHeader('Accept-Ranges', 'bytes');
@@ -178,7 +179,8 @@ function serveRemuxedPipe(filePath, res, reencode, seekTime) {
 
   const startTranscode = () => {
     return new Promise((resolve) => {
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Origin', 'null');
+      res.setHeader('Vary', 'Origin');
       res.setHeader('Content-Type', TRANSCODE_MIME);
       res.setHeader('Cache-Control', 'no-cache');
 
