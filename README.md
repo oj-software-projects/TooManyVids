@@ -6,12 +6,13 @@ A single-window multi-video player with configurable grid layout. Built with Ele
 
 ## Features
 
+- **Setup Screen**: Pick folders, grid and playback options without the terminal; settings are remembered
 - **Single Window**: One application window displaying multiple videos in a grid
 - **Configurable Grid**: Any layout (2x2, 3x3, 4x2, etc.)
 - **Directory Scanning**: Recursively scan multiple directories for videos
 - **Random Selection**: Shuffle and randomly select videos
 - **Per-tile Controls**: Next/Pick, seek, rotate, copy metadata, delete from disk (with confirmation)
-- **Keyboard Controls**: Intuitive shortcuts for common actions
+- **Keyboard Controls**: Intuitive shortcuts for common actions; toolbar auto-hides while playing
 - **Cross-Platform**: Works on macOS, Windows, and Linux
 
 ## Prerequisites
@@ -22,84 +23,64 @@ A single-window multi-video player with configurable grid layout. Built with Ele
 
 ## Installation
 
-### macOS
+### 1. Node.js (>= 22.12)
 
-1. **Install Node.js** (if not already installed):
-   ```bash
-   # Using Homebrew
-   brew install node
-   
-   # Or download from https://nodejs.org/
-   ```
+| System | Command |
+|--------|---------|
+| macOS | `brew install node` (or the installer from https://nodejs.org/) |
+| Windows | Installer from https://nodejs.org/, keep "Add to PATH" checked |
+| Debian/Ubuntu | `curl -fsSL https://deb.nodesource.com/setup_22.x \| sudo -E bash -` then `sudo apt-get install -y nodejs git` |
+| Fedora | `sudo dnf install nodejs git` |
+| Arch | `sudo pacman -S nodejs npm git` |
 
-2. **Clone and install**:
-   ```bash
-   git clone https://github.com/yourusername/toomanyvids.git
-   cd toomanyvids
-   npm install
-   ```
+### 2. ffmpeg (optional)
 
-3. **Run**:
-   ```bash
-   npm start -- --dirs /path/to/videos --grid 2x2
-   ```
+Only needed for `.mkv`, `.avi`, `.flv`, `.wmv`, `.3gp`, `.mpg`, `.mpeg` and the codec fallback. See [ffmpeg in packaged apps](#ffmpeg-in-packaged-apps) for how the app locates it.
 
-### Windows
+| System | Command |
+|--------|---------|
+| macOS | `brew install ffmpeg` |
+| Windows | `winget install ffmpeg` (or https://ffmpeg.org/download.html) |
+| Debian/Ubuntu | `sudo apt install ffmpeg` |
+| Fedora | `sudo dnf install ffmpeg` |
+| Arch | `sudo pacman -S ffmpeg` |
 
-1. **Install Node.js**:
-   - Download and run the installer from https://nodejs.org/
-   - Choose the LTS version and follow the installation wizard
-   - Make sure to check "Add to PATH" during installation
+### 3. Get the app
 
-2. **Clone and install**:
-   ```powershell
-   # Open PowerShell or Command Prompt
-   git clone https://github.com/yourusername/toomanyvids.git
-   cd toomanyvids
-   npm install
-   ```
+```bash
+git clone https://github.com/yourusername/toomanyvids.git
+cd toomanyvids
+npm install
+```
 
-3. **Run**:
-   ```powershell
-   npm start -- --dirs C:\path\to\videos --grid 2x2
-   ```
+### 4. Run
 
-### Debian/Ubuntu Linux
+```bash
+npm start        # macOS, Linux, Windows (PowerShell/CMD)
+```
 
-1. **Install Node.js**:
-   ```bash
-   # Using NodeSource repository (recommended)
-   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-   sudo apt-get install -y nodejs
-   
-   # Or using default repos (may be older version)
-   sudo apt update
-   sudo apt install nodejs npm
-   ```
+The setup screen opens: add folders, choose a grid, press **Start Wall**. No command-line paths required.
+On macOS you can also run `npm start` from Terminal; on Windows use PowerShell or Command Prompt in the project folder.
 
-2. **Install Git** (if not already installed):
-   ```bash
-   sudo apt install git
-   ```
+Optional: skip the setup screen by passing folders and a grid (paths in native notation):
 
-3. **Clone and install**:
-   ```bash
-   git clone https://github.com/yourusername/toomanyvids.git
-   cd toomanyvids
-   npm install
-   ```
+```bash
+# macOS / Linux
+npm start -- --dirs ~/Videos ~/Movies --grid 2x2
 
-4. **Run**:
-   ```bash
-   npm start -- --dirs ./videos --grid 2x2
-   ```
+# Windows
+npm start -- --dirs "C:\Users\me\Videos" --grid 2x2
+```
 
 ## Usage
 
 ### Basic Examples
 
 ```bash
-# 2x2 grid from single directory
+# Setup screen (folders, grid, options), then Start Wall
+npm start
+
+# Skip the setup screen by passing folders on the command line
 npm start -- --dirs ./videos --grid 2x2
 
 # 3x3 grid from multiple directories
@@ -114,10 +95,12 @@ npm start -- --dirs ./videos --grid 2x2 --dev
 
 ### Command Line Options
 
+All options are optional. Without `--dirs` the setup screen opens; every option passed on the command line overrides the saved setup-screen values for that run.
+
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--dirs <dir1> [dir2...]` | One or more directories containing videos | Required |
-| `--grid <ROWSxCOLS>` | Grid layout (e.g., "2x2", "3x3", "4x2") | Required |
+| `--dirs <dir1> [dir2...]` | One or more directories containing videos; skips the setup screen | last saved |
+| `--grid <ROWSxCOLS>` | Grid layout (e.g., "2x2", "3x3", "4x2") | 2x2 |
 | `--shuffle` | Randomize video selection | true |
 | `--no-shuffle` | Use videos in directory order | - |
 | `--loop` | Loop videos continuously | false |
@@ -126,10 +109,13 @@ npm start -- --dirs ./videos --grid 2x2 --dev
 | `--dev` | Open Chrome DevTools for debugging | - |
 | `--help`, `-h` | Show help message | - |
 
+Settings chosen in the setup screen are stored in `config.json` under Electron's per-user data directory (`~/Library/Application Support/toomanyvids` on macOS, `%APPDATA%\toomanyvids` on Windows, `~/.config/toomanyvids` on Linux).
+
 ### Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
+| `Tab` | Back to the setup screen (pauses playback) |
 | `R` | Reshuffle and restart videos |
 | `P` | Pause/Resume all videos |
 | `M` | Toggle mute on all videos |
@@ -173,23 +159,36 @@ toomanyvids/
 │   └── renderer/
 │       ├── index.html     # UI layout and styles
 │       └── player.js      # Video grid controller
-└── src/
-    ├── cli/
-    │   └── parseArgs.js   # CLI argument parsing
-    ├── files/
-    │   └── scanDirectories.js  # Video file scanning and grid selection
-    ├── media/
-    │   └── mode.js        # direct / remux / transcode decision per extension
-    └── logger.js          # Rotating file logger (~/.toomanyvids/logs)
+├── src/
+│   ├── cli/
+│   │   └── parseArgs.js   # CLI argument parsing (all flags optional)
+│   ├── config/
+│   │   └── config.js      # defaults < saved config < CLI, persistence
+│   ├── files/
+│   │   └── scanDirectories.js  # Video file scanning and grid selection
+│   ├── media/
+│   │   └── mode.js        # direct / remux / transcode decision per extension
+│   └── logger.js          # Rotating file logger (~/.toomanyvids/logs)
+└── test/
+    └── config.test.js     # node:test specs for config merging/sanitizing
 ```
 
 ## How It Works
 
-1. **CLI Parsing**: Command-line arguments are parsed to get directories and grid size
-2. **Directory Scanning**: Recursively scans directories for video files (skips macOS `._` forks and files under 1 MB)
+1. **Settings**: The saved `config.json` is loaded; CLI arguments override it. Without CLI folders the renderer shows the setup screen, otherwise the wall starts immediately
+2. **Directory Scanning**: Recursively scans directories for video files (skips macOS `._` forks and files under 1 MB) when the wall starts
 3. **HTTP Server**: A random loopback port serves video files; every URL carries a per-run token so other local pages cannot read them
 4. **Grid Rendering**: CSS Grid layout displays videos in the configured arrangement
 5. **Video Playback**: HTML5 video elements play videos simultaneously; unsupported containers are remuxed or transcoded by ffmpeg on demand
+
+## Development
+
+```bash
+npm run dev     # start with DevTools open
+npm test        # node:test specs (test/*.test.js), no extra dependencies
+```
+
+Tests cover the config layer (`src/config/config.js`): CLI/saved/default precedence, grid clamping and folder sanitizing. Add new specs as `test/*.test.js`; `npm test` picks them up via Node's built-in runner.
 
 ## Building & Distribution
 

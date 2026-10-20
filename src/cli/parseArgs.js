@@ -32,14 +32,13 @@ function showHelp() {
 TooManyVids - Single-window multi-video player
 
 USAGE:
+  electron .                                   # setup screen, uses last settings
   electron . --dirs <dir1> [dir2...] --grid <ROWSxCOLS> [OPTIONS]
   npm start -- --dirs <dir1> [dir2...] --grid <ROWSxCOLS>
 
-REQUIRED:
+OPTIONS (all optional - without --dirs the setup screen opens):
   --dirs <directories>    One or more directories containing video files
   --grid <ROWSxCOLS>      Grid layout (e.g., "2x2", "3x3", "4x2")
-
-OPTIONS:
   --shuffle               Randomize video selection (default: true)
   --no-shuffle            Disable shuffling, use videos in order
   --loop                  Loop videos continuously
@@ -48,12 +47,16 @@ OPTIONS:
   --dev                   Open DevTools for debugging
   --help, -h              Show this help message
 
+Any option given here overrides the values saved from the setup screen.
+
 EXAMPLES:
+  electron .                                  (setup screen)
   electron . --dirs ./videos --grid 2x2
   electron . --dirs ./videos ./clips --grid 3x3 --loop --no-mute
   npm start -- --dirs ./media --grid 4x2 --shuffle
 
 KEYBINDINGS:
+  Tab     Back to the setup screen
   R       Reshuffle and restart videos
   P       Pause/Resume all videos
   M       Toggle mute on all videos
@@ -91,13 +94,9 @@ function parseArgs(argv) {
     arg !== '.'
   );
   
-  const config = {
-    dirs: [],
-    grid: null,
-    shuffle: true,
-    loop: false,
-    mute: true
-  };
+  // Only keys the user explicitly passed end up here; defaults live in src/config/config.js.
+  const config = {};
+  let dirs = null;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -108,9 +107,10 @@ function parseArgs(argv) {
 
     if (arg === '--dirs') {
       // Collect all directories until next flag
+      dirs = dirs || [];
       i++;
       while (i < args.length && !args[i].startsWith('--')) {
-        config.dirs.push(args[i]);
+        dirs.push(args[i]);
         i++;
       }
       i--; // Back up one since loop will increment
@@ -146,17 +146,15 @@ function parseArgs(argv) {
 
   }
 
-  if (config.dirs.length === 0) {
-    log.error('No directories specified');
-    throw new Error('At least one directory is required (--dirs <dir1> [dir2...])');
+  if (dirs) {
+    if (dirs.length === 0) {
+      log.error('--dirs without directories');
+      throw new Error('--dirs requires at least one directory');
+    }
+    config.dirs = dirs;
   }
 
-  if (!config.grid) {
-    log.error('No grid specified');
-    throw new Error('Grid layout is required (--grid ROWSxCOLS)');
-  }
-
-  log.info('Config valid', config);
+  log.info('CLI config parsed', config);
   return config;
 }
 

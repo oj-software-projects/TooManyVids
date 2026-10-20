@@ -56,14 +56,28 @@ class VideoGridPlayer {
     this.errorMessage = document.getElementById('error-message');
     this.errorModal = document.getElementById('error-modal');
 
+    this.dirs = [];
+    this.lobbyStatusEl = document.getElementById('lobby-status');
+    this.hudTimer = null;
+
     this.setupEventListeners();
+    this.setupLobby();
+    this.setupHud();
     this.setupIpcListeners();
     window.toomanyvids.log('VideoGridPlayer initialized');
   }
 
   setupEventListeners() {
     document.addEventListener('keydown', (e) => {
+      if (e.target instanceof HTMLElement && e.target.matches('input, textarea, select')) return;
+
       switch (e.key.toLowerCase()) {
+        case 'tab':
+          if (document.body.classList.contains('mode-wall')) {
+            e.preventDefault();
+            this.showLobby();
+          }
+          break;
         case 'q':
           if (!this.fullscreenPlayer) window.close();
           break;
@@ -131,10 +145,169 @@ class VideoGridPlayer {
     videoEl.style.transform = rotation === 0 ? '' : `rotate(${rotation}deg) scale(${scale})`;
   }
 
+  setupLobby() {
+    this.dirListEl = document.getElementById('dir-list');
+    this.rowsInput = document.getElementById('grid-rows');
+    this.colsInput = document.getElementById('grid-cols');
+    this.gridCellsEl = document.getElementById('grid-cells');
+    this.startBtn = document.getElementById('btn-start');
+
+    document.getElementById('btn-add-dir').addEventListener('click', () => this.addDirs());
+    this.startBtn.addEventListener('click', () => this.startWall());
+
+    document.querySelectorAll('.preset').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.rowsInput.value = btn.dataset.rows;
+        this.colsInput.value = btn.dataset.cols;
+        this.updateGridLabel();
+      });
+    });
+    this.rowsInput.addEventListener('input', () => this.updateGridLabel());
+    this.colsInput.addEventListener('input', () => this.updateGridLabel());
+
+    this.dirListEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.dir-remove');
+      if (!btn) return;
+      this.dirs = this.dirs.filter((dir) => dir !== btn.dataset.path);
+      this.renderDirs();
+    });
+  }
+
+  setupHud() {
+    const wake = () => {
+      if (!document.body.classList.contains('mode-wall')) return;
+      document.body.classList.remove('hud-hidden');
+      clearTimeout(this.hudTimer);
+      this.hudTimer = setTimeout(() => document.body.classList.add('hud-hidden'), 2000);
+    };
+    this.wakeHud = wake;
+    ['mousemove', 'mousedown', 'wheel', 'keydown'].forEach((ev) =>
+      window.addEventListener(ev, wake, { passive: true, capture: true })
+    );
+  }
+
+  setLobbyStatus(message) {
+    this.lobbyStatusEl.textContent = message || '';
+  }
+
+  renderDirs() {
+    this.dirListEl.innerHTML = '';
+    if (this.dirs.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'dir-empty';
+      li.textContent = 'No folders yet';
+      this.dirListEl.appendChild(li);
+      return;
+    }
+    for (const dir of this.dirs) {
+      const li = document.createElement('li');
+      const pathEl = document.createElement('span');
+      pathEl.className = 'dir-path';
+      pathEl.textContent = dir;
+      pathEl.title = dir;
+      const btn = document.createElement('button');
+      btn.className = 'dir-remove';
+      btn.textContent = '\u00d7';
+      btn.title = 'Remove folder';
+      btn.dataset.path = dir;
+      li.append(pathEl, btn);
+      this.dirListEl.appendChild(li);
+    }
+  }
+
+  readGridInputs() {
+    const clamp = (input) => {
+      const n = Math.trunc(Number(input.value));
+      if (!Number.isFinite(n)) return 2;
+      return Math.min(8, Math.max(1, n));
+    };
+    return { rows: clamp(this.rowsInput), cols: clamp(this.colsInput) };
+  }
+
+  updateGridLabel() {
+    const { rows, cols } = this.readGridInputs();
+    this.gridCellsEl.textContent = `${rows * cols} videos`;
+    document.querySelectorAll('.preset').forEach((btn) => {
+      btn.classList.toggle('active', Number(btn.dataset.rows) === rows && Number(btn.dataset.cols) === cols);
+    });
+  }
+
+  async addDirs() {
+    try {
+      const result = await window.toomanyvids.pickDirectories();
+      for (const dir of result?.dirs || []) {
+        if (!this.dirs.includes(dir)) this.dirs.push(dir);
+      }
+      this.renderDirs();
+      this.setLobbyStatus('');
+    } catch (err) {
+      this.setLobbyStatus('Folder picker failed: ' + err.message);
+    }
+  }
+
+  async startWall() {
+    if (this.dirs.length === 0) {
+      this.setLobbyStatus('Add at least one folder');
+      return;
+    }
+
+    this.startBtn.disabled = true;
+    this.startBtn.textContent = 'Starting...';
+    this.setLobbyStatus('');
+
+    try {
+      const result = await window.toomanyvids.startWall({
+        dirs: this.dirs,
+        grid: this.readGridInputs(),
+        shuffle: document.getElementById('opt-shuffle').checked,
+        loop: document.getElementById('opt-loop').checked,
+        mute: document.getElementById('opt-mute').checked
+      });
+      if (result?.error) this.setLobbyStatus(result.error);
+    } catch (err) {
+      this.setLobbyStatus('Failed to start: ' + err.message);
+    } finally {
+      this.startBtn.disabled = false;
+      this.startBtn.textContent = 'Start Wall';
+    }
+  }
+
+  applyLobby(data) {
+    window.toomanyvids.log('Lobby config received', { dirs: data.dirs?.length, grid: data.grid });
+    this.dirs = Array.isArray(data.dirs) ? [...data.dirs] : [];
+    this.rowsInput.value = data.grid?.rows ?? 2;
+    this.colsInput.value = data.grid?.cols ?? 2;
+    document.getElementById('opt-shuffle').checked = Boolean(data.shuffle);
+    document.getElementById('opt-loop').checked = Boolean(data.loop);
+    document.getElementById('opt-mute').checked = Boolean(data.mute);
+    this.renderDirs();
+    this.updateGridLabel();
+    this.setLobbyStatus('');
+    this.showLobby();
+  }
+
+  showLobby() {
+    if (this.fullscreenPlayer !== null) this.exitFullscreen();
+    this.players.forEach((p) => p.video.pause());
+    clearTimeout(this.hudTimer);
+    document.body.classList.remove('mode-wall', 'hud-hidden');
+    document.body.classList.add('mode-lobby');
+    window.toomanyvids.log('Lobby shown');
+  }
+
+  showWall() {
+    document.body.classList.remove('mode-lobby');
+    document.body.classList.add('mode-wall');
+    this.wakeHud();
+  }
+
   setupIpcListeners() {
+    window.toomanyvids.onLobby((data) => this.applyLobby(data));
+
     window.toomanyvids.onConfig((config) => {
       window.toomanyvids.log('Config received', { grid: config.grid?.rows + 'x' + config.grid?.cols, videoCount: config.videos?.length, poolCount: config.pool?.length });
       this.videoPool = config.pool || config.videos || [];
+      this.showWall();
       this.initializeGrid(config);
     });
 
@@ -153,6 +326,12 @@ class VideoGridPlayer {
   initializeGrid(config) {
     this.config = config;
     const { grid, videos, loop, mute } = config;
+
+    // A fresh wall always starts playing with the configured mute state.
+    this.isPaused = false;
+    this.isMuted = Boolean(mute);
+    document.getElementById('btn-pause').textContent = 'Pause';
+    document.getElementById('btn-mute').textContent = this.isMuted ? 'Unmute' : 'Mute';
 
     this.gridContainer.style.gridTemplateColumns = `repeat(${grid.cols}, 1fr)`;
     this.gridContainer.style.gridTemplateRows = `repeat(${grid.rows}, 1fr)`;

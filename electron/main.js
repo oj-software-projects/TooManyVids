@@ -13,6 +13,7 @@ const { spawn, spawnSync } = require('child_process');
 const { parseArgs } = require('../src/cli/parseArgs');
 const { scanDirectories, selectVideos } = require('../src/files/scanDirectories');
 const { pickMode, TRANSCODE_FALLBACK_EXTENSIONS } = require('../src/media/mode');
+const { DEFAULT_CONFIG, mergeConfig, sanitizeSettings, readConfig, writeConfig } = require('../src/config/config');
 const { getLogger } = require('../src/logger');
 
 const log = getLogger('main');
@@ -67,8 +68,26 @@ if (ffmpegAvailable) {
 log.info('App starting', { platform: process.platform, arch: process.arch, electronVersion: process.versions.electron, ffmpegAvailable });
 
 let mainWindow = null;
-let config = null;
+let config = sanitizeSettings(DEFAULT_CONFIG);
 let videos = [];
+let autoStart = false;
+let didAutoStart = false;
+
+function configFilePath() {
+  return path.join(app.getPath('userData'), 'config.json');
+}
+
+function sendLobby() {
+  if (!mainWindow) return;
+  mainWindow.webContents.send('lobby', {
+    dirs: config.dirs,
+    grid: config.grid,
+    shuffle: config.shuffle,
+    loop: config.loop,
+    mute: config.mute,
+    ffmpegAvailable
+  });
+}
 
 let httpPort = 0;
 let httpServer = null;
@@ -288,15 +307,61 @@ function startHttpServer() {
 
 function parseCliArgs() {
   try {
-    config = parseArgs(process.argv);
-    log.info('CLI args parsed', { dirs: config.dirs, grid: config.grid, shuffle: config.shuffle, loop: config.loop, mute: config.mute });
-    return config;
+    const parsed = parseArgs(process.argv);
+    log.info('CLI args parsed', parsed);
+    return parsed;
   } catch (err) {
     log.error('CLI parse error', { error: err.message });
     console.error(`Error: ${err.message}`);
-    console.error('\nUsage: electron . --dirs <dir1> [dir2...] --grid <ROWSxCOLS>');
+    console.error('\nUsage: electron . [--dirs <dir1> [dir2...]] [--grid <ROWSxCOLS>]');
     return null;
   }
+}
+
+/** Scan + send a fresh grid to the renderer and persist the settings. */
+async function startWall(settings) {
+  const next = sanitizeSettings(settings);
+  if (next.dirs.length === 0) return { error: 'Add at least one folder' };
+
+  let scanned;
+  try {
+    scanned = await scanDirectories(next.dirs);
+  } catch (err) {
+    log.error('scanDirectories failed', { error: err.message, stack: err.stack, dirs: next.dirs });
+    return { error: 'Failed to scan folders: ' + err.message };
+  }
+
+  if (scanned.length === 0) {
+    log.warn('No video files found', { dirs: next.dirs });
+    return { error: 'No video files found in the selected folders' };
+  }
+
+  config = next;
+  videos = scanned;
+  writeConfig(configFilePath(), config);
+  videoPathMap.clear();
+
+  const cellCount = config.grid.rows * config.grid.cols;
+  const selectedVideos = selectVideos(videos, cellCount, config.shuffle);
+  const selectedData = selectedVideos.map((vp, i) => toVideoEntry(vp, 'v', i));
+  const poolData = videos.map((vp, i) => toVideoEntry(vp, 'p', i));
+
+  log.info('Starting wall', {
+    dirs: config.dirs, grid: config.grid, cellCount,
+    selectedCount: selectedData.length, poolCount: poolData.length
+  });
+
+  if (mainWindow) {
+    mainWindow.webContents.send('config', {
+      grid: config.grid,
+      videos: selectedData,
+      pool: poolData,
+      loop: config.loop,
+      mute: config.mute,
+      ffmpegAvailable
+    });
+  }
+  return { ok: true };
 }
 
 function toVideoEntry(videoPath, idPrefix, index) {
@@ -344,38 +409,14 @@ async function createWindow() {
   mainWindow.webContents.on('did-finish-load', async () => {
     log.info('Renderer did-finish-load');
 
-    try {
-      videos = await scanDirectories(config.dirs);
-    } catch (err) {
-      log.error('scanDirectories failed', { error: err.message, stack: err.stack });
-      mainWindow.webContents.send('error', 'Failed to scan directories: ' + err.message);
-      return;
+    if (autoStart && !didAutoStart) {
+      didAutoStart = true;
+      const result = await startWall(config);
+      if (!result.error) return;
+      mainWindow.webContents.send('error', result.error);
     }
 
-    log.info('Videos scanned', { count: videos.length });
-
-    if (videos.length === 0) {
-      log.warn('No video files found', { dirs: config.dirs });
-      mainWindow.webContents.send('error', 'No video files found');
-      return;
-    }
-
-    const cellCount = config.grid.rows * config.grid.cols;
-    const selectedVideos = selectVideos(videos, cellCount, config.shuffle);
-
-    const selectedData = selectedVideos.map((vp, i) => toVideoEntry(vp, 'v', i));
-    const poolData = videos.map((vp, i) => toVideoEntry(vp, 'p', i));
-
-    log.info('Sending config to renderer', { cellCount, selectedCount: selectedData.length, poolCount: poolData.length, ffmpegAvailable });
-
-    mainWindow.webContents.send('config', {
-      grid: config.grid,
-      videos: selectedData,
-      pool: poolData,
-      loop: config.loop,
-      mute: config.mute,
-      ffmpegAvailable
-    });
+    sendLobby();
   });
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
@@ -520,6 +561,20 @@ function setupIpc() {
     return { deleted: true, path: filePath };
   });
 
+  ipcMain.handle('start-wall', async (event, settings) => {
+    if (!isTrustedSender(event)) return { error: 'Forbidden' };
+    return startWall(settings || {});
+  });
+
+  ipcMain.handle('pick-directories', async (event) => {
+    if (!isTrustedSender(event) || !mainWindow) return { dirs: [] };
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Add video folders',
+      properties: ['openDirectory', 'multiSelections']
+    });
+    return { dirs: result.canceled ? [] : result.filePaths };
+  });
+
   ipcMain.on('reshuffle', (event) => {
     if (isTrustedSender(event)) handleReshuffle();
   });
@@ -541,12 +596,17 @@ function setupIpc() {
 }
 
 app.whenReady().then(async () => {
-  const parsedConfig = parseCliArgs();
-  if (!parsedConfig) {
-    log.error('No valid config, quitting');
+  const cliConfig = parseCliArgs();
+  if (!cliConfig) {
+    log.error('Invalid CLI args, quitting');
     app.quit();
     return;
   }
+
+  const savedConfig = readConfig(configFilePath());
+  config = mergeConfig(DEFAULT_CONFIG, savedConfig, cliConfig);
+  autoStart = Array.isArray(cliConfig.dirs) && cliConfig.dirs.length > 0;
+  log.info('Effective config', { config, autoStart, saved: Boolean(savedConfig) });
 
   try {
     await startHttpServer();

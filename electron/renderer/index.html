@@ -444,9 +444,252 @@
     #toast.visible {
       opacity: 1;
     }
+
+    /* View switching: setup (lobby) vs. wall */
+    #lobby {
+      display: none;
+      width: 100%;
+      height: 100%;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: #0b0b0b;
+    }
+
+    body.mode-lobby #lobby { display: flex; }
+    body.mode-lobby #app { display: none; }
+
+    .lobby-card {
+      width: 560px;
+      max-width: 100%;
+      max-height: 100%;
+      overflow-y: auto;
+      background: #171717;
+      border: 1px solid #333;
+      border-radius: 10px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .lobby-card h1 {
+      color: #fff;
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .lobby-sub {
+      color: #777;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    .lobby-card .field > label {
+      display: block;
+      color: #888;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+
+    .lobby-card button {
+      background: #3a3a3a;
+      border: 1px solid #555;
+      color: #ddd;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .lobby-card button:hover { background: #4a4a4a; }
+    .lobby-card button:disabled { opacity: 0.5; cursor: default; }
+
+    #dir-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 160px;
+      overflow-y: auto;
+      margin-bottom: 8px;
+    }
+
+    #dir-list li {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #1f1f1f;
+      border: 1px solid #2e2e2e;
+      border-radius: 4px;
+      padding: 6px 8px;
+      color: #ddd;
+      font-size: 12px;
+    }
+
+    #dir-list .dir-path {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      direction: rtl;
+      text-align: left;
+    }
+
+    #dir-list .dir-remove {
+      padding: 2px 8px;
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    #dir-list .dir-empty {
+      color: #666;
+      font-size: 12px;
+      padding: 4px 0;
+      background: transparent;
+      border: 0;
+    }
+
+    .presets {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .preset.active {
+      background: #2f6feb;
+      border-color: #4b86f0;
+      color: #fff;
+    }
+
+    .grid-custom {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #888;
+      font-size: 12px;
+    }
+
+    .grid-custom input {
+      width: 64px;
+      background: #0f0f0f;
+      border: 1px solid #444;
+      border-radius: 4px;
+      color: #eee;
+      padding: 5px 8px;
+      font-size: 13px;
+    }
+
+    .grid-cells { margin-left: auto; color: #777; }
+
+    .toggles { display: flex; gap: 18px; }
+
+    .toggles label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #ccc;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .lobby-footer {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #lobby-status {
+      flex: 1;
+      color: #ff8a8a;
+      font-size: 12px;
+      min-height: 16px;
+    }
+
+    #btn-start {
+      background: #2f6feb;
+      border-color: #4b86f0;
+      color: #fff;
+      padding: 8px 20px;
+      font-weight: 600;
+    }
+
+    #btn-start:hover { background: #3d7cf2; }
+
+    .lobby-hint {
+      color: #666;
+      font-size: 11px;
+    }
+
+    .lobby-hint kbd {
+      background: #2a2a2a;
+      border-radius: 3px;
+      padding: 1px 5px;
+    }
+
+    /* HUD auto-hide while the wall is playing */
+    #toolbar {
+      transition: transform 0.25s ease, opacity 0.25s ease;
+    }
+
+    body.mode-wall.hud-hidden #toolbar {
+      transform: translateY(-100%);
+      opacity: 0;
+    }
+
+    body.mode-wall.hud-hidden { cursor: none; }
   </style>
 </head>
-<body>
+<body class="mode-lobby">
+  <section id="lobby">
+    <div class="lobby-card">
+      <header>
+        <h1>TooManyVids</h1>
+        <p class="lobby-sub">Pick folders and a grid, then start the wall.</p>
+      </header>
+
+      <div class="field">
+        <label>Folders</label>
+        <ul id="dir-list"></ul>
+        <button id="btn-add-dir">+ Add folder</button>
+      </div>
+
+      <div class="field">
+        <label>Grid</label>
+        <div class="presets">
+          <button class="preset" data-rows="2" data-cols="2">2&times;2</button>
+          <button class="preset" data-rows="3" data-cols="3">3&times;3</button>
+          <button class="preset" data-rows="4" data-cols="2">4&times;2</button>
+          <button class="preset" data-rows="4" data-cols="4">4&times;4</button>
+        </div>
+        <div class="grid-custom">
+          <input id="grid-rows" type="number" min="1" max="8" value="2">
+          <span>&times;</span>
+          <input id="grid-cols" type="number" min="1" max="8" value="2">
+          <span id="grid-cells" class="grid-cells">4 videos</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Playback</label>
+        <div class="toggles">
+          <label><input type="checkbox" id="opt-shuffle" checked><span>Shuffle</span></label>
+          <label><input type="checkbox" id="opt-loop"><span>Loop</span></label>
+          <label><input type="checkbox" id="opt-mute" checked><span>Mute</span></label>
+        </div>
+      </div>
+
+      <footer class="lobby-footer">
+        <span id="lobby-status"></span>
+        <button id="btn-start">Start Wall</button>
+      </footer>
+
+      <p class="lobby-hint">Press <kbd>Tab</kbd> while playing to come back here. Settings are saved on start.</p>
+    </div>
+  </section>
+
   <div id="app">
     <div id="toolbar">
       <span class="title">TooManyVids</span>

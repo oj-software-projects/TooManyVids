@@ -1,10 +1,11 @@
 {
   "name": "toomanyvids",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Single-window multi-video player with configurable grid layout",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node --test",
     "dev": "electron . --dev",
     "dist": "electron-builder --publish never",
     "dist:mac": "electron-builder --mac --publish never",

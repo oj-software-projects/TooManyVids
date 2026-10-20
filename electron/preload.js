@@ -12,6 +12,18 @@ const _log = (level, message, meta) => {
 };
 
 contextBridge.exposeInMainWorld('toomanyvids', {
+  onLobby: (callback) => {
+    ipcRenderer.on('lobby', (event, data) => callback(data));
+  },
+
+  startWall: (settings) => {
+    return ipcRenderer.invoke('start-wall', settings);
+  },
+
+  pickDirectories: () => {
+    return ipcRenderer.invoke('pick-directories');
+  },
+
   onConfig: (callback) => {
     ipcRenderer.on('config', (event, data) => callback(data));
   },

@@ -38,3 +38,6 @@ coverage/
 # Misc
 .cache/
 *.tgz
+
+# Local sample media
+videos/
