@@ -8,7 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { parseArgs } = require('../src/cli/parseArgs');
 const { scanDirectories, selectVideos } = require('../src/files/scanDirectories');
 const { pickMode, TRANSCODE_FALLBACK_EXTENSIONS } = require('../src/media/mode');
@@ -23,17 +23,38 @@ app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('num-raster-threads', '4');
 
-let ffmpegAvailable = false;
-try {
-  const result = require('child_process').spawnSync('ffmpeg', ['-version'], { timeout: 3000 });
-  ffmpegAvailable = result.status === 0;
-  if (ffmpegAvailable) {
-    log.info('ffmpeg detected on system');
-  } else {
-    log.warn('ffmpeg not found - transcoding disabled');
+// GUI apps on macOS/Windows often miss the shell PATH, so probe common install locations.
+function resolveBinary(name) {
+  const envPath = process.env[`${name.toUpperCase()}_PATH`];
+  const candidates = [envPath, name];
+
+  if (process.platform === 'darwin') {
+    candidates.push(`/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`);
+  } else if (process.platform === 'win32') {
+    candidates.push(
+      `C:\\ffmpeg\\bin\\${name}.exe`,
+      path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Links', `${name}.exe`)
+    );
   }
-} catch (_) {
-  log.warn('ffmpeg not available - transcoding disabled');
+
+  for (const candidate of candidates.filter(Boolean)) {
+    try {
+      if (spawnSync(candidate, ['-version'], { timeout: 3000, stdio: 'ignore' }).status === 0) {
+        return candidate;
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+const FFMPEG_PATH = resolveBinary('ffmpeg');
+const FFPROBE_PATH = resolveBinary('ffprobe');
+const ffmpegAvailable = Boolean(FFMPEG_PATH);
+
+if (ffmpegAvailable) {
+  log.info('ffmpeg detected', { ffmpeg: FFMPEG_PATH, ffprobe: FFPROBE_PATH });
+} else {
+  log.warn('ffmpeg not found - transcoding disabled');
 }
 
 log.info('App starting', { platform: process.platform, arch: process.arch, electronVersion: process.versions.electron, ffmpegAvailable });
@@ -154,7 +175,7 @@ function serveRemuxedPipe(filePath, res, reencode, seekTime) {
       res.setHeader('Content-Type', TRANSCODE_MIME);
       res.setHeader('Cache-Control', 'no-cache');
 
-      const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
       proc.stdout.pipe(res);
 
@@ -392,11 +413,15 @@ function setupIpc() {
     }
     const filePath = videoPathMap.get(videoId);
     return new Promise((resolve) => {
+      if (!FFPROBE_PATH) {
+        resolve({ error: 'ffprobe not available' });
+        return;
+      }
       const args = [
         '-v', 'quiet', '-print_format', 'json',
         '-show_format', '-show_streams', filePath
       ];
-      const proc = spawn('ffprobe', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const proc = spawn(FFPROBE_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
       proc.stdout.on('data', (d) => { stdout += d.toString(); });
       proc.on('error', () => resolve({ error: 'ffprobe not available' }));

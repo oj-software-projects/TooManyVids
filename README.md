@@ -191,6 +191,50 @@ toomanyvids/
 4. **Grid Rendering**: CSS Grid layout displays videos in the configured arrangement
 5. **Video Playback**: HTML5 video elements play videos simultaneously; unsupported containers are remuxed or transcoded by ffmpeg on demand
 
+## Building & Distribution
+
+Packaging is done with [electron-builder](https://www.electron.build/). Build for the current OS:
+
+```bash
+npm ci
+npm run dist          # current platform
+npm run dist:mac      # dmg + zip, arm64 and x64
+npm run dist:win      # NSIS installer + portable exe, x64
+npm run dist:linux    # AppImage + deb, x64
+```
+
+Artifacts land in `dist/`. macOS targets must be built on macOS; let the CI matrix handle the other platforms.
+
+### GitHub Releases
+
+`.github/workflows/release.yml` builds macOS, Windows and Linux on every `v*` tag and attaches the artifacts to a GitHub Release:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+`workflow_dispatch` builds and uploads the artifacts (1 day retention) without creating a release.
+
+The repository is intended to be **public**: for public repositories, standard GitHub-hosted runners (Ubuntu, Windows, macOS) are free with no minute limit, and release assets do not consume Actions storage. A private repository on the Free plan instead gets 2,000 minutes/month plus 500 MB artifact storage, with macOS minutes weighted higher. Larger runners are always billed, regardless of repository visibility. See [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
+
+Tag builds attach the installers directly to the GitHub Release; only manual runs store Actions artifacts, to avoid keeping duplicate copies.
+
+### Unsigned builds
+
+The current builds are unsigned:
+
+- **macOS**: Gatekeeper blocks the app. Right-click → Open once, or `xattr -dr com.apple.quarantine /Applications/TooManyVids.app`.
+- **Windows**: SmartScreen → "More info" → "Run anyway".
+
+For trusted distribution add an Apple Developer ID plus notarization and a Windows code-signing certificate.
+
+### ffmpeg in packaged apps
+
+ffmpeg/ffprobe are not bundled. The app searches `PATH`, then common install locations (`/opt/homebrew/bin`, `/usr/local/bin`, `C:\ffmpeg\bin`, WinGet links). Override with `FFMPEG_PATH` / `FFPROBE_PATH`. Without ffmpeg only directly playable files work.
+
+Without an app icon, electron-builder falls back to the default Electron icon.
+
 ## Troubleshooting
 
 ### Videos not playing
