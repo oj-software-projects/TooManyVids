@@ -10,6 +10,7 @@ A single-window multi-video player with configurable grid layout. Built with Ele
 - **Configurable Grid**: Any layout (2x2, 3x3, 4x2, etc.)
 - **Directory Scanning**: Recursively scan multiple directories for videos
 - **Random Selection**: Shuffle and randomly select videos
+- **Per-tile Controls**: Next/Pick, seek, rotate, copy metadata, delete from disk (with confirmation)
 - **Keyboard Controls**: Intuitive shortcuts for common actions
 - **Cross-Platform**: Works on macOS, Windows, and Linux
 

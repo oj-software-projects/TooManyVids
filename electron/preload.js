@@ -32,6 +32,10 @@ contextBridge.exposeInMainWorld('toomanyvids', {
     return ipcRenderer.invoke('get-video-meta', videoId);
   },
 
+  deleteVideo: (videoId) => {
+    return ipcRenderer.invoke('delete-video', videoId);
+  },
+
   log: (message, meta) => _log('INFO', message, meta),
   warn: (message, meta) => _log('WARN', message, meta),
   error: (message, meta) => _log('ERROR', message, meta),

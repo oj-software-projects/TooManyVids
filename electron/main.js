@@ -447,6 +447,28 @@ function setupIpc() {
     });
   });
 
+  ipcMain.handle('delete-video', async (_event, videoId) => {
+    if (!videoId || !videoPathMap.has(videoId)) {
+      return { error: 'Unknown video id' };
+    }
+
+    const filePath = videoPathMap.get(videoId);
+    try {
+      await fs.promises.unlink(filePath);
+    } catch (err) {
+      log.error('Delete video failed', { videoId, path: filePath, error: err.message });
+      return { error: err.message };
+    }
+
+    videos = videos.filter(v => v !== filePath);
+    for (const [id, mappedPath] of videoPathMap) {
+      if (mappedPath === filePath) videoPathMap.delete(id);
+    }
+
+    log.info('Video deleted', { videoId, path: filePath, remaining: videos.length });
+    return { deleted: true, path: filePath };
+  });
+
   ipcMain.on('reshuffle', () => handleReshuffle());
 
   ipcMain.on('log', (event, data) => {

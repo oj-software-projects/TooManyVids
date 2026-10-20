@@ -101,7 +101,30 @@ class VideoGridPlayer {
   }
 
   handleResize() {
+    this.players.forEach(p => this.applyRotationTo(p.video, p.rotation));
+    if (this.fullscreenPlayer !== null) {
+      const fullscreenVideo = document.querySelector('#fullscreen-container video');
+      const player = this.players[this.fullscreenPlayer];
+      if (fullscreenVideo && player) this.applyRotationTo(fullscreenVideo, player.rotation);
+    }
     this.updateStatus();
+  }
+
+  applyRotationTo(videoEl, rotation) {
+    let scale = 1;
+    if (rotation % 180 !== 0) {
+      const boxW = videoEl.clientWidth;
+      const boxH = videoEl.clientHeight;
+      const videoW = videoEl.videoWidth;
+      const videoH = videoEl.videoHeight;
+      if (boxW > 0 && boxH > 0 && videoW > 0 && videoH > 0) {
+        const fit = Math.min(boxW / videoW, boxH / videoH);
+        const shownW = videoW * fit;
+        const shownH = videoH * fit;
+        scale = Math.min(boxW / shownH, boxH / shownW);
+      }
+    }
+    videoEl.style.transform = rotation === 0 ? '' : `rotate(${rotation}deg) scale(${scale})`;
   }
 
   setupIpcListeners() {
@@ -170,6 +193,7 @@ class VideoGridPlayer {
           <button class="btn-next" title="Load random video">&#x23e9; Next</button>
           <button class="btn-pick" title="Pick from list">&#x2630; Pick</button>
           <button class="btn-meta" title="Copy metadata to clipboard">Meta</button>
+          <button class="btn-delete" title="Delete video from disk">Del</button>
           <div class="btn-rotate-group">
             <button class="btn-rotate-left" title="Rotate left 90°">&#x21b6;</button>
             <button class="btn-rotate-right" title="Rotate right 90°">&#x21b7;</button>
@@ -196,6 +220,7 @@ class VideoGridPlayer {
     const btnNext = cell.querySelector('.btn-next');
     const btnPick = cell.querySelector('.btn-pick');
     const btnMeta = cell.querySelector('.btn-meta');
+    const btnDelete = cell.querySelector('.btn-delete');
     const btnRotateLeft = cell.querySelector('.btn-rotate-left');
     const btnRotateRight = cell.querySelector('.btn-rotate-right');
     const pickList = cell.querySelector('.pick-list');
@@ -471,13 +496,46 @@ class VideoGridPlayer {
       }
     });
 
+    btnDelete.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const p = getPlayer();
+      if (!p || !p.videoPath || !p.videoUrl) return;
+      if (!window.confirm(`Delete "${p.videoPath}" from disk?\n\nThis cannot be undone.`)) return;
+
+      const idMatch = p.videoUrl.match(/id=([^&]+)/);
+      if (!idMatch) return;
+
+      const deletedPath = p.videoPath;
+      const deletedName = deletedPath.split(/[/\\]/).pop();
+      const result = await window.toomanyvids.deleteVideo(idMatch[1]);
+      if (result.error) {
+        this.showToast('Delete failed: ' + result.error);
+        return;
+      }
+
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      p.videoPath = null;
+      p.videoUrl = null;
+      this.videoPool = this.videoPool.filter(v => v.path !== deletedPath);
+
+      const next = this.getAvailableVideo(index);
+      if (next) {
+        this.loadSingleVideo(p, next, this.config?.loop, this.config?.mute);
+      } else {
+        loading.style.display = 'none';
+        titleEl.textContent = 'No videos left';
+        titleEl.style.opacity = '1';
+      }
+      this.showToast('Deleted ' + deletedName);
+    });
+
     const applyRotation = (deg) => {
-      const player = this.players[index];
-      if (!player) return;
-      player.rotation = ((player.rotation + deg) % 360 + 360) % 360;
-      const isVertical = player.rotation === 90 || player.rotation === 270;
-      const scale = isVertical ? 'scaleY(0.5625)' : '';
-      video.style.transform = `rotate(${player.rotation}deg) ${scale}`;
+      const p = getPlayer();
+      if (!p) return;
+      p.rotation = ((p.rotation + deg) % 360 + 360) % 360;
+      this.applyRotationTo(video, p.rotation);
     };
 
     btnRotateLeft.addEventListener('click', (e) => {
@@ -557,16 +615,14 @@ class VideoGridPlayer {
     titleEl.textContent = player.element.querySelector('.cell-title').textContent;
     infoEl.textContent = player.element.querySelector('.cell-info').textContent;
 
-    const isVertical = player.rotation === 90 || player.rotation === 270;
-    const scale = isVertical ? 'scaleY(0.5625)' : '';
-    fullscreenVideo.style.transform = `rotate(${player.rotation}deg) ${scale}`;
-
     fullscreenContainer.style.display = 'flex';
+    this.applyRotationTo(fullscreenVideo, player.rotation);
 
     const tryPlay = () => {
       if (fullscreenVideo.readyState >= 3) {
         fullscreenVideo.currentTime = savedTime;
         fullscreenVideo.play().catch(() => {});
+        this.applyRotationTo(fullscreenVideo, player.rotation);
         return true;
       }
       return false;
@@ -609,9 +665,6 @@ class VideoGridPlayer {
       if (player) {
         player.video.currentTime = fullscreenVideo.currentTime;
         player.video.play().catch(() => {});
-        const isVertical = player.rotation === 90 || player.rotation === 270;
-        const scale = isVertical ? 'scaleY(0.5625)' : '';
-        player.video.style.transform = `rotate(${player.rotation}deg) ${scale}`;
       }
 
       fullscreenVideo.pause();
@@ -621,6 +674,7 @@ class VideoGridPlayer {
     }
 
     this.gridContainer.style.display = 'grid';
+    if (player) this.applyRotationTo(player.video, player.rotation);
     this.fullscreenPlayer = null;
   }
 
