@@ -28,10 +28,6 @@ contextBridge.exposeInMainWorld('toomanyvids', {
     ipcRenderer.send('reshuffle');
   },
 
-  getScreenInfo: () => {
-    return ipcRenderer.invoke('get-screen-info');
-  },
-
   getVideoMeta: (videoId) => {
     return ipcRenderer.invoke('get-video-meta', videoId);
   },

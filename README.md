@@ -17,6 +17,7 @@ A single-window multi-video player with configurable grid layout. Built with Ele
 
 - **Node.js** >= 18
 - **npm** (comes with Node.js)
+- **ffmpeg / ffprobe** (optional): required for `.mkv`, `.avi`, `.flv`, `.wmv`, `.3gp`, `.mpg`, `.mpeg` and the codec fallback for other containers. Without it, only directly playable files work.
 
 ## Installation
 
@@ -148,6 +149,16 @@ npm start -- --dirs ./videos --grid 2x2 --dev
 - 3GPP (.3gp)
 - Ogg (.ogv)
 
+Files are served in one of three modes:
+
+| Mode | Formats | What happens |
+|------|---------|--------------|
+| `direct` | mp4, webm, mov, m4v, ogv | Streamed with HTTP range support |
+| `remux` | mkv, avi, flv, wmv, 3gp | ffmpeg stream-copies into fragmented MP4 (no re-encode) |
+| `transcode` | mpg, mpeg, fallback | ffmpeg re-encodes to H.264/AAC, max. 2 concurrent |
+
+If a directly played file errors or renders a black frame, the player retries it through the transcode fallback.
+
 ## Architecture
 
 ```
@@ -164,17 +175,20 @@ toomanyvids/
 └── src/
     ├── cli/
     │   └── parseArgs.js   # CLI argument parsing
-    └── files/
-        └── scanDirectories.js  # Video file scanning
+    ├── files/
+    │   └── scanDirectories.js  # Video file scanning and grid selection
+    ├── media/
+    │   └── mode.js        # direct / remux / transcode decision per extension
+    └── logger.js          # Rotating file logger (~/.toomanyvids/logs)
 ```
 
 ## How It Works
 
 1. **CLI Parsing**: Command-line arguments are parsed to get directories and grid size
-2. **Directory Scanning**: Recursively scans directories for video files
-3. **HTTP Server**: A local HTTP server serves video files to avoid URL parsing issues
+2. **Directory Scanning**: Recursively scans directories for video files (skips macOS `._` forks and files under 1 MB)
+3. **HTTP Server**: A random loopback port serves video files; every URL carries a per-run token so other local pages cannot read them
 4. **Grid Rendering**: CSS Grid layout displays videos in the configured arrangement
-5. **Video Playback**: HTML5 video elements play videos simultaneously
+5. **Video Playback**: HTML5 video elements play videos simultaneously; unsupported containers are remuxed or transcoded by ffmpeg on demand
 
 ## Troubleshooting
 

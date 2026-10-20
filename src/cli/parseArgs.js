@@ -45,7 +45,6 @@ OPTIONS:
   --loop                  Loop videos continuously
   --mute                  Start videos muted (default: true)
   --no-mute               Start videos with sound
-  --seed <number>         Random seed for reproducible shuffles
   --dev                   Open DevTools for debugging
   --help, -h              Show this help message
 
@@ -97,8 +96,7 @@ function parseArgs(argv) {
     grid: null,
     shuffle: true,
     loop: false,
-    mute: true,
-    seed: null
+    mute: true
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -146,16 +144,6 @@ function parseArgs(argv) {
       config.mute = false;
     }
 
-    if (arg === '--seed') {
-      i++;
-      if (i >= args.length) {
-        throw new Error('--seed requires a numeric value');
-      }
-      config.seed = parseInt(args[i], 10);
-      if (isNaN(config.seed)) {
-        throw new Error(`Invalid seed value: "${args[i]}"`);
-      }
-    }
   }
 
   if (config.dirs.length === 0) {

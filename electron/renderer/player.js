@@ -3,6 +3,44 @@
  * Manages the video grid and playback
  */
 
+function formatTime(seconds) {
+  if (!Number.isFinite(seconds)) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60).toString().padStart(2, '0');
+  return `${mins}:${secs}`;
+}
+
+function bindSeekControls(video, seekBar, timeDisplay, onSeek) {
+  let isSeeking = false;
+  let seekTarget = null;
+
+  seekBar.addEventListener('pointerdown', (e) => {
+    isSeeking = true;
+    seekBar.setPointerCapture(e.pointerId);
+  });
+
+  seekBar.addEventListener('pointerup', (e) => {
+    isSeeking = false;
+    seekBar.releasePointerCapture(e.pointerId);
+    if (seekTarget !== null) {
+      onSeek(seekTarget);
+      seekTarget = null;
+    }
+  });
+
+  seekBar.addEventListener('input', (e) => {
+    if (!video.duration) return;
+    seekTarget = (e.target.value / 100) * video.duration;
+    timeDisplay.textContent = `${formatTime(seekTarget)} / ${formatTime(video.duration)}`;
+  });
+
+  video.addEventListener('timeupdate', () => {
+    if (isSeeking || !video.duration) return;
+    seekBar.value = (video.currentTime / video.duration) * 100;
+    timeDisplay.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
+  });
+}
+
 class VideoGridPlayer {
   constructor() {
     this.players = [];
@@ -105,9 +143,12 @@ class VideoGridPlayer {
         videoUrl: null,
         videoPath: null,
         videoExt: null,
-        transcodeUrl: null,
-        usingTranscode: false,
-        needsRemux: false,
+        mode: 'direct',
+        fallbackUrl: null,
+        usingFallback: false,
+        _blackCheckDone: false,
+        _blackAttempts: 0,
+        _blackTimer: null,
         rotation: 0
       });
     }
@@ -143,6 +184,9 @@ class VideoGridPlayer {
     `;
 
     const video = cell.querySelector('video');
+    // Needed so the canvas black-frame check can read pixels from the HTTP stream.
+    video.crossOrigin = 'anonymous';
+    const getPlayer = () => this.players[index];
     const loading = cell.querySelector('.loading');
     const cellOverlay = cell.querySelector('.cell-overlay');
     const seekBar = cell.querySelector('.seek-bar');
@@ -165,13 +209,11 @@ class VideoGridPlayer {
       loading.style.display = 'none';
     });
 
-    let blackCheckTimer = null;
-    let blackCheckAttempts = 0;
-
     const attemptBlackDetect = () => {
-      if (player.usingTranscode || !player.transcodeUrl || player._blackCheckDone) return;
+      const p = getPlayer();
+      if (!p || p._blackCheckDone || p.usingFallback || !p.fallbackUrl) return;
       if (video.paused || video.ended) return;
-      blackCheckAttempts++;
+      p._blackAttempts++;
       try {
         const canvas = document.createElement('canvas');
         canvas.width = 4;
@@ -186,55 +228,60 @@ class VideoGridPlayer {
           }
         }
         if (nonBlack > 0) {
-          player._blackCheckDone = true;
+          p._blackCheckDone = true;
           return;
         }
-        if (blackCheckAttempts < 4) {
-          blackCheckTimer = setTimeout(attemptBlackDetect, 1000);
+        if (p._blackAttempts < 4) {
+          p._blackTimer = setTimeout(attemptBlackDetect, 1000);
           return;
         }
-        window.toomanyvids.warn('Black frame confirmed, switching to transcode', { index, attempts: blackCheckAttempts, path: player.videoPath });
-        player.usingTranscode = true;
-        player._blackCheckDone = true;
+        window.toomanyvids.warn('Black frame confirmed, switching to transcode', { index, attempts: p._blackAttempts, path: p.videoPath });
+        p.usingFallback = true;
+        p._blackCheckDone = true;
         const wasMuted = video.muted;
         const wasLoop = video.loop;
-        video.src = player.transcodeUrl;
+        video.src = p.fallbackUrl;
         video.muted = wasMuted;
         video.loop = wasLoop;
         loading.style.display = 'block';
         video.play().catch(() => {
           loading.style.display = 'none';
         });
-      } catch (_) {
-        if (blackCheckAttempts < 4) {
-          blackCheckTimer = setTimeout(attemptBlackDetect, 1000);
+      } catch (err) {
+        window.toomanyvids.warn('Black frame check failed', { index, error: err.message });
+        if (p._blackAttempts < 4) {
+          p._blackTimer = setTimeout(attemptBlackDetect, 1000);
         } else {
-          player._blackCheckDone = true;
+          p._blackCheckDone = true;
         }
       }
     };
 
     video.addEventListener('timeupdate', () => {
-      if (player._blackCheckDone || player.usingTranscode || !player.transcodeUrl) return;
-      if (video.currentTime > 0.5 && !blackCheckTimer) {
-        blackCheckTimer = setTimeout(attemptBlackDetect, 500);
+      const p = getPlayer();
+      if (!p || p._blackCheckDone || p.usingFallback || !p.fallbackUrl || p._blackTimer) return;
+      if (video.currentTime > 0.5) {
+        p._blackTimer = setTimeout(attemptBlackDetect, 500);
       }
     });
 
     video.addEventListener('error', () => {
-      clearTimeout(blackCheckTimer);
+      const p = getPlayer();
+      if (!p) return;
+      clearTimeout(p._blackTimer);
+      p._blackTimer = null;
       loading.style.display = 'none';
-      const ext = player.videoExt || '';
+      const ext = (p.videoExt || '').replace('.', '').toLowerCase();
       const videoError = video.error;
       const errCode = videoError ? videoError.code : 'unknown';
       const errMsg = videoError ? videoError.message : 'unknown';
-      window.toomanyvids.error('Video error', { index, ext, errCode, errMsg, src: player.videoUrl });
+      window.toomanyvids.error('Video error', { index, ext, errCode, errMsg, src: p.videoUrl });
 
-      if (player.transcodeUrl && !player.usingTranscode) {
-        window.toomanyvids.log('Retrying with transcode', { index, path: player.videoPath });
-        player.usingTranscode = true;
-        player._blackCheckDone = true;
-        video.src = player.transcodeUrl;
+      if (p.fallbackUrl && !p.usingFallback) {
+        window.toomanyvids.log('Retrying with transcode', { index, path: p.videoPath });
+        p.usingFallback = true;
+        p._blackCheckDone = true;
+        video.src = p.fallbackUrl;
         loading.style.display = 'block';
         video.play().then(() => {
           window.toomanyvids.log('Transcode playback started', { index });
@@ -265,25 +312,30 @@ class VideoGridPlayer {
     });
 
     video.addEventListener('stalled', () => {
-      window.toomanyvids.warn('Video stalled', { index, src: player.videoUrl });
+      const p = getPlayer();
+      window.toomanyvids.warn('Video stalled', { index, src: p?.videoUrl });
       loading.style.display = 'block';
     });
 
     video.addEventListener('playing', () => {
+      const p = getPlayer();
       loading.style.display = 'none';
-      if (!player._blackCheckDone && !player.usingTranscode && player.transcodeUrl && !blackCheckTimer) {
-        blackCheckTimer = setTimeout(attemptBlackDetect, 1500);
+      if (p && !p._blackCheckDone && !p.usingFallback && p.fallbackUrl && !p._blackTimer) {
+        p._blackTimer = setTimeout(attemptBlackDetect, 1500);
       }
     });
 
     video.addEventListener('ended', () => {
-      if (!this.config?.loop) {
-        this.playNextVideo(index);
-      }
+      if (this.config?.loop) return;
+      const next = this.getAvailableVideo(index);
+      if (next) this.loadSingleVideo(getPlayer(), next, false, this.config?.mute);
     });
 
-    const seekRemux = (targetTime) => {
-      const baseUrl = player.usingTranscode && player.transcodeUrl ? player.transcodeUrl : player.videoUrl;
+    const seekViaServer = (targetTime) => {
+      const p = getPlayer();
+      if (!p) return;
+      const baseUrl = p.usingFallback ? p.fallbackUrl : p.videoUrl;
+      if (!baseUrl) return;
       const sep = baseUrl.includes('?') ? '&' : '?';
       const wasMuted = video.muted;
       const wasLoop = video.loop;
@@ -293,25 +345,13 @@ class VideoGridPlayer {
       video.play().catch(() => {});
     };
 
-    let isSeeking = false;
-    let seekTargetTime = null;
-
-    seekBar.addEventListener('pointerdown', (e) => {
-      isSeeking = true;
-      seekBar.setPointerCapture(e.pointerId);
-    });
-
-    seekBar.addEventListener('pointerup', (e) => {
-      isSeeking = false;
-      seekBar.releasePointerCapture(e.pointerId);
-      if (seekTargetTime !== null) {
-        loading.style.display = 'block';
-        if (player.needsRemux) {
-          seekRemux(seekTargetTime);
-        } else {
-          video.currentTime = seekTargetTime;
-        }
-        seekTargetTime = null;
+    bindSeekControls(video, seekBar, timeDisplay, (time) => {
+      const p = getPlayer();
+      loading.style.display = 'block';
+      if (p && (p.mode !== 'direct' || p.usingFallback)) {
+        seekViaServer(time);
+      } else {
+        video.currentTime = time;
       }
     });
 
@@ -324,43 +364,6 @@ class VideoGridPlayer {
 
     video.addEventListener('canplay', () => {
       loading.style.display = 'none';
-    });
-
-    seekBar.addEventListener('input', (e) => {
-      if (video.duration) {
-        seekTargetTime = (e.target.value / 100) * video.duration;
-        const currentMins = Math.floor(seekTargetTime / 60);
-        const currentSecs = Math.floor(seekTargetTime % 60).toString().padStart(2, '0');
-        const totalMins = Math.floor(video.duration / 60);
-        const totalSecs = Math.floor(video.duration % 60).toString().padStart(2, '0');
-        timeDisplay.textContent = `${currentMins}:${currentSecs} / ${totalMins}:${totalSecs}`;
-      }
-    });
-
-    video.addEventListener('timeupdate', () => {
-      if (!isSeeking && video.duration) {
-        const percent = (video.currentTime / video.duration) * 100;
-        seekBar.value = percent;
-        const currentMins = Math.floor(video.currentTime / 60);
-        const currentSecs = Math.floor(video.currentTime % 60).toString().padStart(2, '0');
-        const totalMins = Math.floor(video.duration / 60);
-        const totalSecs = Math.floor(video.duration % 60).toString().padStart(2, '0');
-        timeDisplay.textContent = `${currentMins}:${currentSecs} / ${totalMins}:${totalSecs}`;
-      }
-    });
-
-    seekBar.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (video.duration) {
-        const rect = seekBar.getBoundingClientRect();
-        const percent = (e.clientX - rect.left) / rect.width;
-        loading.style.display = 'block';
-        if (player.needsRemux) {
-          seekRemux(percent * video.duration);
-        } else {
-          video.currentTime = percent * video.duration;
-        }
-      }
     });
 
     cell.addEventListener('dblclick', (e) => {
@@ -531,56 +534,22 @@ class VideoGridPlayer {
       fullscreenContainer.addEventListener('mouseleave', () => {
         fullscreenContainer.querySelector('.fullscreen-overlay').classList.remove('visible');
       });
+
+      const createdVideo = fullscreenContainer.querySelector('video');
+      bindSeekControls(
+        createdVideo,
+        fullscreenContainer.querySelector('.fullscreen-seek'),
+        fullscreenContainer.querySelector('.fullscreen-time'),
+        (time) => { createdVideo.currentTime = time; }
+      );
     }
 
     const fullscreenVideo = fullscreenContainer.querySelector('video');
     const titleEl = fullscreenContainer.querySelector('.fullscreen-title');
     const infoEl = fullscreenContainer.querySelector('.fullscreen-info');
-    const seekBar = fullscreenContainer.querySelector('.fullscreen-seek');
-    const timeDisplay = fullscreenContainer.querySelector('.fullscreen-time');
-
-    let isSeeking = false;
-    let seekTarget = null;
-
-    seekBar.onpointerdown = (e) => {
-      isSeeking = true;
-      seekBar.setPointerCapture(e.pointerId);
-    };
-
-    seekBar.onpointerup = (e) => {
-      isSeeking = false;
-      seekBar.releasePointerCapture(e.pointerId);
-      if (seekTarget !== null) {
-        fullscreenVideo.currentTime = seekTarget;
-        seekTarget = null;
-      }
-    };
-
-    seekBar.oninput = (e) => {
-      if (fullscreenVideo.duration) {
-        seekTarget = (e.target.value / 100) * fullscreenVideo.duration;
-        const currentMins = Math.floor(seekTarget / 60);
-        const currentSecs = Math.floor(seekTarget % 60).toString().padStart(2, '0');
-        const totalMins = Math.floor(fullscreenVideo.duration / 60);
-        const totalSecs = Math.floor(fullscreenVideo.duration % 60).toString().padStart(2, '0');
-        timeDisplay.textContent = `${currentMins}:${currentSecs} / ${totalMins}:${totalSecs}`;
-      }
-    };
-
-    fullscreenVideo.ontimeupdate = () => {
-      if (fullscreenVideo.duration && !isSeeking) {
-        const percent = (fullscreenVideo.currentTime / fullscreenVideo.duration) * 100;
-        seekBar.value = percent;
-        const currentMins = Math.floor(fullscreenVideo.currentTime / 60);
-        const currentSecs = Math.floor(fullscreenVideo.currentTime % 60).toString().padStart(2, '0');
-        const totalMins = Math.floor(fullscreenVideo.duration / 60);
-        const totalSecs = Math.floor(fullscreenVideo.duration % 60).toString().padStart(2, '0');
-        timeDisplay.textContent = `${currentMins}:${currentSecs} / ${totalMins}:${totalSecs}`;
-      }
-    };
 
     const savedTime = player.video.currentTime;
-    const savedUrl = player.videoUrl || player.video.src;
+    const savedUrl = (player.usingFallback && player.fallbackUrl) || player.videoUrl || player.video.src;
     player.video.pause();
 
     fullscreenVideo.muted = this.isMuted;
@@ -656,13 +625,11 @@ class VideoGridPlayer {
   }
 
   loadVideos(videos, loop, mute) {
-    const shuffled = this.shuffleArray([...videos]);
-
-    this.players.forEach((player, index) => {
+    videos.forEach((videoData, index) => {
       setTimeout(() => {
-        const videoData = shuffled[index % shuffled.length];
-        this.loadSingleVideo(player, videoData, loop, mute);
-      }, index * 1500);
+        const player = this.players[index];
+        if (player) this.loadSingleVideo(player, videoData, loop, mute);
+      }, index * 250);
     });
   }
 
@@ -674,12 +641,13 @@ class VideoGridPlayer {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 
-  shuffleArray(array) {
-    for (let i = array.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [array[i], array[j]] = [array[j], array[i]];
-    }
-    return array;
+  resetPlayerState(player) {
+    clearTimeout(player._blackTimer);
+    player.rotation = 0;
+    player.usingFallback = false;
+    player._blackCheckDone = false;
+    player._blackAttempts = 0;
+    player._blackTimer = null;
   }
 
   getActivePaths() {
@@ -709,7 +677,7 @@ class VideoGridPlayer {
     const titleEl = cell.querySelector('.cell-title');
     const infoEl = cell.querySelector('.cell-info');
 
-    const { url, path: filePath, size, transcodeUrl, ext, needsRemux } = videoData;
+    const { url, fallbackUrl, path: filePath, size, ext, mode } = videoData;
     const title = filePath.split(/[/\\]/).pop().replace(/\.[^/.]+$/, '');
     const sizeStr = this.formatFileSize(size);
 
@@ -721,18 +689,15 @@ class VideoGridPlayer {
     titleEl.style.opacity = '0';
     infoEl.style.opacity = '0';
 
-    player.rotation = 0;
-    player.usingTranscode = false;
-    player._blackCheckDone = false;
-    player._blackCheckTimer = null;
+    this.resetPlayerState(player);
     video.style.transform = '';
 
     player.videoUrl = url;
     player.videoPath = filePath;
     player.videoSize = size;
-    player.transcodeUrl = transcodeUrl || null;
+    player.fallbackUrl = fallbackUrl || null;
     player.videoExt = ext || '';
-    player.needsRemux = !!needsRemux;
+    player.mode = mode || 'direct';
 
     video.src = url;
     video.loop = loop;
@@ -754,14 +719,6 @@ class VideoGridPlayer {
         infoEl.style.opacity = '0';
       };
     });
-  }
-
-  playNextVideo(index) {
-    const player = this.players[index];
-    if (player && player.video) {
-      player.video.currentTime = 0;
-      player.video.play().catch(() => {});
-    }
   }
 
   reshuffle() {
@@ -830,7 +787,7 @@ class VideoGridPlayer {
 document.addEventListener('DOMContentLoaded', () => {
   window.toomanyvids.log('DOMContentLoaded fired');
   try {
-    window.player = new VideoGridPlayer();
+    window.gridPlayer = new VideoGridPlayer();
   } catch (err) {
     window.toomanyvids.error('VideoGridPlayer constructor failed', { error: err.message, stack: err.stack });
   }

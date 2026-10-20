@@ -7,9 +7,11 @@ const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { parseArgs } = require('../src/cli/parseArgs');
-const { scanDirectories } = require('../src/files/scanDirectories');
+const { scanDirectories, selectVideos } = require('../src/files/scanDirectories');
+const { pickMode, TRANSCODE_FALLBACK_EXTENSIONS } = require('../src/media/mode');
 const { getLogger } = require('../src/logger');
 
 const log = getLogger('main');
@@ -34,23 +36,17 @@ try {
   log.warn('ffmpeg not available - transcoding disabled');
 }
 
-const REMUX_EXTENSIONS = new Set(['.mkv', '.avi', '.flv', '.wmv', '.3gp']);
-
-const TRANSCODE_EXTENSIONS = new Set(['.mpg', '.mpeg']);
-
-const ALL_FFMPEG_EXTENSIONS = new Set([...REMUX_EXTENSIONS, ...TRANSCODE_EXTENSIONS]);
-
-const TRANSCODE_FALLBACK_EXTENSIONS = new Set(['.mov', '.m4v', '.mkv', '.avi', '.flv', '.wmv', '.mpg', '.mpeg', '.3gp', '.ogv']);
-
 log.info('App starting', { platform: process.platform, arch: process.arch, electronVersion: process.versions.electron, ffmpegAvailable });
 
 let mainWindow = null;
 let config = null;
 let videos = [];
 
-const HTTP_PORT = 18923;
+let httpPort = 0;
 let httpServer = null;
 let videoPathMap = new Map();
+// Loopback URLs are only reachable with this token, so other local pages cannot read the videos.
+const sessionToken = crypto.randomBytes(16).toString('hex');
 
 const MIME_TYPES = {
   '.mp4': 'video/mp4',
@@ -69,77 +65,57 @@ const MIME_TYPES = {
 
 const TRANSCODE_MIME = 'video/mp4';
 
+const MAX_CHUNK = 2 * 1024 * 1024;
+
+function streamFile(filePath, start, end, res) {
+  const stream = fs.createReadStream(filePath, { start, end });
+  stream.on('error', (err) => {
+    log.error('File stream error', { filePath, start, end, error: err.message });
+    res.destroy(err);
+  });
+  stream.pipe(res);
+}
+
 function serveDirect(filePath, range, res) {
-  const stat = fs.statSync(filePath);
-  const fileSize = stat.size;
+  const fileSize = fs.statSync(filePath).size;
   const ext = path.extname(filePath).toLowerCase();
   const mimeType = MIME_TYPES[ext] || 'application/octet-stream';
 
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Range');
   res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+  res.setHeader('Accept-Ranges', 'bytes');
 
-  if (range) {
-    const parts = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(parts[0], 10);
-    let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-    const MAX_CHUNK = 2 * 1024 * 1024;
-    if (end - start + 1 > MAX_CHUNK) {
-      end = start + MAX_CHUNK - 1;
-    }
-    const chunkSize = end - start + 1;
-
-    res.writeHead(206, {
-      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': chunkSize,
+  if (!range) {
+    res.writeHead(200, {
+      'Content-Length': fileSize,
       'Content-Type': mimeType
     });
-
-    fs.createReadStream(filePath, { start, end }).pipe(res);
-  } else {
-    const MAX_INITIAL = 2 * 1024 * 1024;
-    const end = Math.min(MAX_INITIAL, fileSize) - 1;
-    const chunkSize = end + 1;
-
-    res.writeHead(206, {
-      'Content-Range': `bytes 0-${end}/${fileSize}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': chunkSize,
-      'Content-Type': mimeType
-    });
-
-    fs.createReadStream(filePath, { start: 0, end }).pipe(res);
-  }
-}
-
-const videoDurationCache = new Map();
-
-function getVideoDuration(filePath) {
-  if (videoDurationCache.has(filePath)) {
-    return Promise.resolve(videoDurationCache.get(filePath));
+    streamFile(filePath, 0, fileSize - 1, res);
+    return;
   }
 
-  return new Promise((resolve) => {
-    const proc = spawn('ffprobe', [
-      '-v', 'error', '-show_entries', 'format=duration',
-      '-of', 'default=noprint_wrappers=1:nokey=1', filePath
-    ], { stdio: ['ignore', 'pipe', 'ignore'] });
+  const parts = range.replace(/bytes=/, '').split('-');
+  const start = parseInt(parts[0], 10);
+  let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
 
-    let output = '';
-    proc.stdout.on('data', (data) => { output += data.toString(); });
+  if (!Number.isFinite(start) || start < 0 || start >= fileSize) {
+    res.writeHead(416, { 'Content-Range': `bytes */${fileSize}` });
+    res.end();
+    return;
+  }
 
-    proc.on('error', () => {
-      videoDurationCache.set(filePath, 0);
-      resolve(0);
-    });
+  end = Math.min(Number.isFinite(end) ? end : fileSize - 1, fileSize - 1);
+  if (end < start) end = fileSize - 1;
+  end = Math.min(end, start + MAX_CHUNK - 1);
 
-    proc.on('close', (code) => {
-      const duration = code === 0 ? (parseFloat(output.trim()) || 0) : 0;
-      videoDurationCache.set(filePath, duration);
-      resolve(duration);
-    });
+  res.writeHead(206, {
+    'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+    'Content-Length': end - start + 1,
+    'Content-Type': mimeType
   });
+
+  streamFile(filePath, start, end, res);
 }
 
 const MAX_CONCURRENT_TRANSCODES = 2;
@@ -158,19 +134,19 @@ function processTranscodeQueue() {
   }
 }
 
-function serveRemuxedPipe(filePath, res, transcode, seekTime) {
+function serveRemuxedPipe(filePath, res, reencode, seekTime) {
   const seekArgs = seekTime > 0
     ? ['-ss', String(seekTime), '-noaccurate_seek', '-i', filePath]
     : ['-i', filePath];
 
-  const args = transcode
+  const args = reencode
     ? [...seekArgs, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
-       '-c:a', 'aac', '-b:a', '128k', '-vf', 'autorotate',
+       '-c:a', 'aac', '-b:a', '128k',
        '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov', '-']
     : [...seekArgs, '-c', 'copy', '-metadata:s:v', 'rotate=0',
        '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov', '-'];
 
-  log.info('Serving remuxed pipe', { filePath, transcode, seekTime, cmd: args.join(' ') });
+  log.info('Serving ffmpeg pipe', { filePath, mode: reencode ? 'transcode' : 'remux', seekTime, cmd: args.join(' ') });
 
   const startTranscode = () => {
     return new Promise((resolve) => {
@@ -213,10 +189,10 @@ function serveRemuxedPipe(filePath, res, transcode, seekTime) {
     });
   };
 
-  if (transcode && activeTranscodes >= MAX_CONCURRENT_TRANSCODES) {
+  if (reencode && activeTranscodes >= MAX_CONCURRENT_TRANSCODES) {
     log.info('Transcode queued', { filePath, active: activeTranscodes, queued: transcodeQueue.length });
     transcodeQueue.push({ filePath, run: startTranscode });
-  } else if (transcode) {
+  } else if (reencode) {
     activeTranscodes++;
     startTranscode().finally(() => {
       activeTranscodes--;
@@ -229,23 +205,20 @@ function serveRemuxedPipe(filePath, res, transcode, seekTime) {
 
 function startHttpServer() {
   httpServer = http.createServer((req, res) => {
-    const url = new URL(req.url, `http://localhost:${HTTP_PORT}`);
+    const url = new URL(req.url, 'http://127.0.0.1');
     const videoId = url.searchParams.get('id');
-    const transcode = url.searchParams.get('transcode') === '1';
+    const requestedMode = url.searchParams.get('mode');
     const seekTime = parseFloat(url.searchParams.get('t') || '0') || 0;
 
-    if (req.url === '/duration' && videoId && videoPathMap.has(videoId)) {
-      const filePath = videoPathMap.get(videoId);
-      getVideoDuration(filePath).then((duration) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ duration }));
-      });
+    if (url.searchParams.get('token') !== sessionToken) {
+      log.warn('HTTP 403 - bad token', { pathname: url.pathname });
+      res.writeHead(403);
+      res.end('Forbidden');
       return;
     }
 
     if (!videoId || !videoPathMap.has(videoId)) {
-      log.warn('HTTP 404 - unknown video id', { videoId, url: req.url });
+      log.warn('HTTP 404 - unknown video id', { videoId, pathname: url.pathname });
       res.writeHead(404);
       res.end('Not found');
       return;
@@ -253,12 +226,13 @@ function startHttpServer() {
 
     const filePath = videoPathMap.get(videoId);
     const ext = path.extname(filePath).toLowerCase();
-    const needsFfmpeg = ALL_FFMPEG_EXTENSIONS.has(ext);
+    const useExplicitMode = ffmpegAvailable && (requestedMode === 'remux' || requestedMode === 'transcode');
+    const mode = useExplicitMode ? requestedMode : pickMode(ext, ffmpegAvailable);
 
     try {
-      if (ffmpegAvailable && (transcode || needsFfmpeg)) {
-        log.info('Serving via ffmpeg pipe', { videoId, ext, transcode, seekTime });
-        serveRemuxedPipe(filePath, res, transcode, seekTime);
+      if (mode !== 'direct') {
+        log.info('Serving via ffmpeg pipe', { videoId, ext, mode, seekTime });
+        serveRemuxedPipe(filePath, res, mode === 'transcode', seekTime);
       } else {
         log.debug('Serving direct', { videoId, ext });
         serveDirect(filePath, req.headers.range, res);
@@ -272,8 +246,13 @@ function startHttpServer() {
     }
   });
 
-  httpServer.listen(HTTP_PORT, '127.0.0.1', () => {
-    log.info('HTTP server started', { port: HTTP_PORT });
+  return new Promise((resolve, reject) => {
+    httpServer.once('error', reject);
+    httpServer.listen(0, '127.0.0.1', () => {
+      httpPort = httpServer.address().port;
+      log.info('HTTP server started', { port: httpPort });
+      resolve();
+    });
   });
 }
 
@@ -288,6 +267,27 @@ function parseCliArgs() {
     console.error('\nUsage: electron . --dirs <dir1> [dir2...] --grid <ROWSxCOLS>');
     return null;
   }
+}
+
+function toVideoEntry(videoPath, idPrefix, index) {
+  const id = `${idPrefix}${index}`;
+  videoPathMap.set(id, videoPath);
+
+  let size = 0;
+  try {
+    size = fs.statSync(videoPath).size;
+  } catch (err) {
+    log.warn('Cannot stat video file', { path: videoPath, error: err.message });
+  }
+
+  const ext = path.extname(videoPath).toLowerCase();
+  const mode = pickMode(ext, ffmpegAvailable);
+  const url = `http://127.0.0.1:${httpPort}/video?id=${id}&token=${sessionToken}`;
+  const fallbackUrl = ffmpegAvailable && mode !== 'transcode' && TRANSCODE_FALLBACK_EXTENSIONS.has(ext)
+    ? `${url}&mode=transcode`
+    : null;
+
+  return { id, url, fallbackUrl, path: videoPath, size, ext, mode };
 }
 
 async function createWindow() {
@@ -328,56 +328,10 @@ async function createWindow() {
     }
 
     const cellCount = config.grid.rows * config.grid.cols;
+    const selectedVideos = selectVideos(videos, cellCount, config.shuffle);
 
-    let uniqueVideos = [...videos];
-    if (config.shuffle) {
-      for (let i = uniqueVideos.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [uniqueVideos[i], uniqueVideos[j]] = [uniqueVideos[j], uniqueVideos[i]];
-      }
-    }
-
-    const selectedVideos = [];
-    for (let i = 0; i < cellCount; i++) {
-      selectedVideos.push(uniqueVideos[i % uniqueVideos.length]);
-    }
-
-    videoPathMap.clear();
-
-    const buildVideoData = (videoPath, idPrefix, index) => {
-      const id = `${idPrefix}${index}`;
-      videoPathMap.set(id, videoPath);
-
-      let fileSize = 0;
-      try {
-        const stat = fs.statSync(videoPath);
-        fileSize = stat.size;
-      } catch (err) {
-        log.warn('Cannot stat video file', { path: videoPath, error: err.message });
-      }
-
-      const ext = path.extname(videoPath).toLowerCase();
-      const needsFfmpeg = ALL_FFMPEG_EXTENSIONS.has(ext);
-      const baseUrl = `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`;
-      const transcodeUrl = ffmpegAvailable && TRANSCODE_FALLBACK_EXTENSIONS.has(ext) ? baseUrl + '&transcode=1' : null;
-
-      let url = baseUrl;
-      if (ffmpegAvailable && needsFfmpeg) {
-        url = baseUrl + '&transcode=1';
-      }
-
-      return {
-        url,
-        transcodeUrl: url.includes('transcode=1') ? null : transcodeUrl,
-        path: videoPath,
-        size: fileSize,
-        ext,
-        needsRemux: needsFfmpeg
-      };
-    };
-
-    const selectedData = selectedVideos.map((vp, i) => buildVideoData(vp, 'v', i));
-    const poolData = videos.map((vp, i) => buildVideoData(vp, 'p', i));
+    const selectedData = selectedVideos.map((vp, i) => toVideoEntry(vp, 'v', i));
+    const poolData = videos.map((vp, i) => toVideoEntry(vp, 'p', i));
 
     log.info('Sending config to renderer', { cellCount, selectedCount: selectedData.length, poolCount: poolData.length, ffmpegAvailable });
 
@@ -387,8 +341,6 @@ async function createWindow() {
       pool: poolData,
       loop: config.loop,
       mute: config.mute,
-      screenWidth,
-      screenHeight,
       ffmpegAvailable
     });
   });
@@ -420,47 +372,10 @@ function handleReshuffle() {
   log.info('Reshuffling videos');
 
   const cellCount = config.grid.rows * config.grid.cols;
+  const selectedVideos = selectVideos(videos, cellCount, true);
 
-  const shuffled = [...videos].sort(() => Math.random() - 0.5);
-  const selectedVideos = [];
-  for (let i = 0; i < cellCount; i++) {
-    selectedVideos.push(shuffled[i % shuffled.length]);
-  }
-
-  videoPathMap.clear();
-
-  const buildVideoData = (videoPath, idPrefix, index) => {
-    const id = `${idPrefix}${index}`;
-    videoPathMap.set(id, videoPath);
-
-    let fileSize = 0;
-    try {
-      const stat = fs.statSync(videoPath);
-      fileSize = stat.size;
-    } catch (err) {}
-
-    const ext = path.extname(videoPath).toLowerCase();
-    const needsFfmpeg = ALL_FFMPEG_EXTENSIONS.has(ext);
-    const baseUrl = `http://127.0.0.1:${HTTP_PORT}/video?id=${id}`;
-    const transcodeUrl = ffmpegAvailable && TRANSCODE_FALLBACK_EXTENSIONS.has(ext) ? baseUrl + '&transcode=1' : null;
-
-    let url = baseUrl;
-    if (ffmpegAvailable && needsFfmpeg) {
-      url = baseUrl + '&transcode=1';
-    }
-
-    return {
-      url,
-      transcodeUrl: url.includes('transcode=1') ? null : transcodeUrl,
-      path: videoPath,
-      size: fileSize,
-      ext,
-      needsRemux: needsFfmpeg
-    };
-  };
-
-  const selectedData = selectedVideos.map((vp, i) => buildVideoData(vp, 'v', i));
-  const poolData = videos.map((vp, i) => buildVideoData(vp, 'p', i));
+  const selectedData = selectedVideos.map((vp, i) => toVideoEntry(vp, 'v', i));
+  const poolData = videos.map((vp, i) => toVideoEntry(vp, 'p', i));
 
   mainWindow.webContents.send('reshuffle', {
     videos: selectedData,
@@ -471,15 +386,6 @@ function handleReshuffle() {
 }
 
 function setupIpc() {
-  ipcMain.handle('get-screen-info', () => {
-    const primaryDisplay = screen.getPrimaryDisplay();
-    return {
-      width: primaryDisplay.size.width,
-      height: primaryDisplay.size.height,
-      workArea: primaryDisplay.workAreaSize
-    };
-  });
-
   ipcMain.handle('get-video-meta', (_event, videoId) => {
     if (!videoId || !videoPathMap.has(videoId)) {
       return { error: 'Unknown video id' };
@@ -566,7 +472,13 @@ app.whenReady().then(async () => {
     return;
   }
 
-  startHttpServer();
+  try {
+    await startHttpServer();
+  } catch (err) {
+    log.error('HTTP server failed', { error: err.message });
+    app.quit();
+    return;
+  }
   setupIpc();
 
   try {

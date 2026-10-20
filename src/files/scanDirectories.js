@@ -120,62 +120,30 @@ async function scanDirectories(directories) {
 }
 
 /**
- * Shuffle array using Fisher-Yates algorithm
- * @param {Array} array - Array to shuffle
- * @param {number|null} seed - Optional seed for reproducibility
- * @returns {Array} Shuffled array
+ * Pick `count` videos for the grid. Repeats the pool when it is smaller.
+ * @param {string[]} videos
+ * @param {number} count
+ * @param {boolean} shuffle
+ * @returns {string[]}
  */
-function shuffleArray(array, seed = null) {
-  const shuffled = [...array];
+function selectVideos(videos, count, shuffle = true) {
+  if (videos.length === 0) return [];
 
-  // Simple seeded random if seed provided
-  let random;
-  if (seed !== null) {
-    let s = seed;
-    random = () => {
-      s = (s * 1664525 + 1013904223) & 0xffffffff;
-      return (s >>> 0) / 0xffffffff;
-    };
-  } else {
-    random = Math.random;
+  const pool = [...videos];
+  if (shuffle) {
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
   }
 
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-
-  return shuffled;
-}
-
-/**
- * Select N videos from the pool
- * @param {string[]} videos - Pool of video paths
- * @param {number} count - Number of videos to select
- * @param {boolean} shuffle - Whether to shuffle
- * @param {number|null} seed - Random seed
- * @returns {string[]} Selected videos (may repeat if pool is smaller than count)
- */
-function selectVideos(videos, count, shuffle = true, seed = null) {
-  if (videos.length === 0) {
-    return [];
-  }
-
-  let pool = shuffle ? shuffleArray(videos, seed) : [...videos];
-  const selected = [];
-
-  for (let i = 0; i < count; i++) {
-    selected.push(pool[i % pool.length]);
-  }
-
-  return selected;
+  return Array.from({ length: count }, (_, i) => pool[i % pool.length]);
 }
 
 module.exports = {
   scanDirectories,
   scanDirectory,
   isVideoFile,
-  VIDEO_EXTENSIONS,
-  shuffleArray,
-  selectVideos
+  selectVideos,
+  VIDEO_EXTENSIONS
 };
