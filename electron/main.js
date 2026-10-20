@@ -3,7 +3,8 @@
  * Single-window multi-video player
  */
 
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog } = require('electron');
+const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -15,6 +16,12 @@ const { pickMode, TRANSCODE_FALLBACK_EXTENSIONS } = require('../src/media/mode')
 const { getLogger } = require('../src/logger');
 
 const log = getLogger('main');
+
+const RENDERER_URL = pathToFileURL(path.join(__dirname, 'renderer', 'index.html')).href;
+
+function isTrustedSender(event) {
+  return Boolean(event?.senderFrame && event.senderFrame.url === RENDERER_URL);
+}
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport,Vulkan');
@@ -329,6 +336,9 @@ async function createWindow() {
     }
   });
 
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+
   mainWindow.webContents.on('did-finish-load', async () => {
     log.info('Renderer did-finish-load');
 
@@ -407,7 +417,8 @@ function handleReshuffle() {
 }
 
 function setupIpc() {
-  ipcMain.handle('get-video-meta', (_event, videoId) => {
+  ipcMain.handle('get-video-meta', (event, videoId) => {
+    if (!isTrustedSender(event)) return { error: 'Forbidden' };
     if (!videoId || !videoPathMap.has(videoId)) {
       return { error: 'Unknown video id' };
     }
@@ -472,12 +483,25 @@ function setupIpc() {
     });
   });
 
-  ipcMain.handle('delete-video', async (_event, videoId) => {
+  ipcMain.handle('delete-video', async (event, videoId) => {
+    if (!isTrustedSender(event)) return { error: 'Forbidden' };
     if (!videoId || !videoPathMap.has(videoId)) {
       return { error: 'Unknown video id' };
     }
 
     const filePath = videoPathMap.get(videoId);
+    if (!mainWindow) return { cancelled: true };
+
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      buttons: ['Cancel', 'Delete'],
+      defaultId: 0,
+      cancelId: 0,
+      message: 'Delete video from disk?',
+      detail: `${filePath}\n\nThis cannot be undone.`
+    });
+    if (response !== 1) return { cancelled: true };
+
     try {
       await fs.promises.unlink(filePath);
     } catch (err) {
@@ -494,9 +518,12 @@ function setupIpc() {
     return { deleted: true, path: filePath };
   });
 
-  ipcMain.on('reshuffle', () => handleReshuffle());
+  ipcMain.on('reshuffle', (event) => {
+    if (isTrustedSender(event)) handleReshuffle();
+  });
 
   ipcMain.on('log', (event, data) => {
+    if (!isTrustedSender(event)) return;
     const logger = getLogger('renderer');
     if (typeof data === 'object' && data.level) {
       const method = data.level.toLowerCase();

@@ -504,7 +504,6 @@ class VideoGridPlayer {
       e.stopPropagation();
       const p = getPlayer();
       if (!p || !p.videoPath || !p.videoUrl) return;
-      if (!window.confirm(`Delete "${p.videoPath}" from disk?\n\nThis cannot be undone.`)) return;
 
       const idMatch = p.videoUrl.match(/id=([^&]+)/);
       if (!idMatch) return;
@@ -516,6 +515,7 @@ class VideoGridPlayer {
         this.showToast('Delete failed: ' + result.error);
         return;
       }
+      if (!result.deleted) return;
 
       video.pause();
       video.removeAttribute('src');
