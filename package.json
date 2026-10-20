@@ -1,6 +1,6 @@
 {
   "name": "toomanyvids",
-  "version": "1.0.0",
+  "version": "0.1.1",
   "description": "Single-window multi-video player with configurable grid layout",
   "main": "electron/main.js",
   "scripts": {
