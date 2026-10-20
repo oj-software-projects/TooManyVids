@@ -82,12 +82,12 @@ class VideoGridPlayer {
           }
           break;
         case 'q':
-          if (!this.fullscreenPlayer) window.close();
+          if (this.fullscreenPlayer === null) window.close();
           break;
         case 'escape':
           if (this.metaModal.classList.contains('visible')) {
             this.hideMeta();
-          } else if (this.fullscreenPlayer) {
+          } else if (this.fullscreenPlayer !== null) {
             this.exitFullscreen();
           } else if (document.body.classList.contains('mode-wall')) {
             this.showLobby();
@@ -846,6 +846,23 @@ class VideoGridPlayer {
       });
 
       const createdVideo = fullscreenContainer.querySelector('video');
+      let clickTimer = null;
+      fullscreenContainer.addEventListener('click', (e) => {
+        if (e.target.closest('.fullscreen-overlay')) return;
+        if (clickTimer) {
+          clearTimeout(clickTimer);
+          clickTimer = null;
+          return;
+        }
+        clickTimer = setTimeout(() => {
+          clickTimer = null;
+          if (createdVideo.paused) {
+            createdVideo.play().catch(() => {});
+          } else {
+            createdVideo.pause();
+          }
+        }, 250);
+      });
       bindSeekControls(
         createdVideo,
         fullscreenContainer.querySelector('.fullscreen-seek'),
@@ -873,7 +890,11 @@ class VideoGridPlayer {
     const tryPlay = () => {
       if (fullscreenVideo.readyState >= 3) {
         fullscreenVideo.currentTime = savedTime;
-        fullscreenVideo.play().catch(() => {});
+        if (this.isPaused) {
+          fullscreenVideo.pause();
+        } else {
+          fullscreenVideo.play().catch(() => {});
+        }
         this.applyRotationTo(fullscreenVideo, player.rotation);
         return true;
       }
@@ -916,11 +937,14 @@ class VideoGridPlayer {
 
       if (player) {
         player.video.currentTime = fullscreenVideo.currentTime;
-        player.video.play().catch(() => {});
+        if (!this.isPaused) player.video.play().catch(() => {});
       }
 
+      fullscreenVideo.oncanplay = null;
+      fullscreenVideo.onerror = null;
       fullscreenVideo.pause();
-      fullscreenVideo.src = '';
+      fullscreenVideo.removeAttribute('src');
+      fullscreenVideo.load();
       fullscreenVideo.style.transform = '';
       fullscreenContainer.style.display = 'none';
     }
@@ -1082,6 +1106,15 @@ class VideoGridPlayer {
       }
     });
 
+    const fullscreenVideo = document.querySelector('#fullscreen-container video');
+    if (this.fullscreenPlayer !== null && fullscreenVideo) {
+      if (this.isPaused) {
+        fullscreenVideo.pause();
+      } else {
+        fullscreenVideo.play().catch(() => {});
+      }
+    }
+
     btn.textContent = this.isPaused ? 'Resume' : 'Pause';
     this.updateStatus();
   }
@@ -1094,6 +1127,9 @@ class VideoGridPlayer {
     this.players.forEach(player => {
       player.video.muted = this.isMuted;
     });
+
+    const fullscreenVideo = document.querySelector('#fullscreen-container video');
+    if (fullscreenVideo) fullscreenVideo.muted = this.isMuted;
 
     btn.textContent = this.isMuted ? 'Unmute' : 'Mute';
   }
