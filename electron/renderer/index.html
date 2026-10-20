@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src http://127.0.0.1:*; connect-src http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TooManyVids</title>
   <style>
@@ -469,7 +470,7 @@
     <div class="content">
       <h3>Error</h3>
       <p id="error-message">Something went wrong</p>
-      <button onclick="document.getElementById('error-modal').classList.remove('visible')">OK</button>
+      <button id="error-ok">OK</button>
     </div>
   </div>
 

@@ -89,6 +89,10 @@ class VideoGridPlayer {
       }
     });
 
+    document.getElementById('error-ok').addEventListener('click', () => {
+      this.errorModal.classList.remove('visible');
+    });
+
     document.getElementById('btn-reshuffle').addEventListener('click', () => this.reshuffle());
     document.getElementById('btn-pause').addEventListener('click', () => this.togglePause());
     document.getElementById('btn-mute').addEventListener('click', () => this.toggleMute());
