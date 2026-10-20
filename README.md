@@ -11,7 +11,7 @@ A single-window multi-video player with configurable grid layout. Built with Ele
 - **Configurable Grid**: Any layout (2x2, 3x3, 4x2, etc.)
 - **Directory Scanning**: Recursively scan multiple directories for videos
 - **Random Selection**: Shuffle and randomly select videos
-- **Per-tile Controls**: Next/Pick, seek, rotate, copy metadata, delete from disk (with confirmation)
+- **Per-tile Controls**: Next/Pick, seek, rotate, inspect metadata (path, codecs, resolution, duration, bitrate; copyable), delete from disk (with confirmation)
 - **Keyboard Controls**: Intuitive shortcuts for common actions; toolbar auto-hides while playing
 - **Cross-Platform**: Works on macOS, Windows, and Linux
 
@@ -108,6 +108,8 @@ All options are optional. Without `--dirs` the setup screen opens; every option 
 | `--no-mute` | Start videos with sound | - |
 | `--dev` | Open Chrome DevTools for debugging | - |
 | `--help`, `-h` | Show help message | - |
+
+Each video runs in at most one cell. If a folder holds fewer videos than the grid has cells, the extra cells stay empty.
 
 Settings chosen in the setup screen are stored in `config.json` under Electron's per-user data directory (`~/Library/Application Support/toomanyvids` on macOS, `%APPDATA%\toomanyvids` on Windows, `~/.config/toomanyvids` on Linux).
 

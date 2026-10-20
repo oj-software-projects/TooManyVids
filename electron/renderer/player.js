@@ -55,6 +55,8 @@ class VideoGridPlayer {
     this.shortcutsEl = document.getElementById('shortcuts');
     this.errorMessage = document.getElementById('error-message');
     this.errorModal = document.getElementById('error-modal');
+    this.metaModal = document.getElementById('meta-modal');
+    this.metaTextEl = document.getElementById('meta-text');
 
     this.dirs = [];
     this.folderCounts = new Map();
@@ -83,7 +85,9 @@ class VideoGridPlayer {
           if (!this.fullscreenPlayer) window.close();
           break;
         case 'escape':
-          if (this.fullscreenPlayer) {
+          if (this.metaModal.classList.contains('visible')) {
+            this.hideMeta();
+          } else if (this.fullscreenPlayer) {
             this.exitFullscreen();
           } else if (document.body.classList.contains('mode-wall')) {
             this.showLobby();
@@ -106,6 +110,12 @@ class VideoGridPlayer {
 
     document.getElementById('error-ok').addEventListener('click', () => {
       this.errorModal.classList.remove('visible');
+    });
+
+    document.getElementById('meta-close').addEventListener('click', () => this.hideMeta());
+    document.getElementById('meta-copy').addEventListener('click', () => this.copyMeta());
+    this.metaModal.addEventListener('click', (e) => {
+      if (e.target === this.metaModal) this.hideMeta();
     });
 
     document.getElementById('btn-setup').addEventListener('click', () => this.showLobby());
@@ -683,7 +693,10 @@ class VideoGridPlayer {
     btnMeta.addEventListener('click', async (e) => {
       e.stopPropagation();
       const p = this.players[index];
-      if (!p || !p.videoUrl) return;
+      if (!p || !p.videoUrl) {
+        this.showToast('No video loaded yet');
+        return;
+      }
       const idMatch = p.videoUrl.match(/id=([^&]+)/);
       if (!idMatch) return;
       const videoId = idMatch[1];
@@ -707,10 +720,8 @@ class VideoGridPlayer {
         if (meta.audioCodec) {
           lines.push(`Audio: ${meta.audioCodecLong || meta.audioCodec} ${meta.audioSampleRate}Hz ${meta.audioChannels}ch`);
         }
-        const text = lines.join('\n');
-        await navigator.clipboard.writeText(text);
-        this.showToast('Metadata copied to clipboard');
-        window.toomanyvids.log('Meta copied', { index, path: meta.path });
+        this.showMeta(lines.join('\n'));
+        window.toomanyvids.log('Meta shown', { index, path: meta.path });
       } catch (err) {
         this.showToast('Failed to get metadata');
         window.toomanyvids.warn('Meta failed', { index, error: err.message });
@@ -782,7 +793,7 @@ class VideoGridPlayer {
 
   enterFullscreen(index) {
     const player = this.players[index];
-    if (!player) return;
+    if (!player || !player.videoPath) return;
 
     window.toomanyvids.log('Enter fullscreen', { index, path: player.videoPath });
     this.fullscreenPlayer = index;
@@ -899,7 +910,38 @@ class VideoGridPlayer {
     this.fullscreenPlayer = null;
   }
 
+  clearPlayer(player) {
+    const video = player.video;
+    clearTimeout(player._blackTimer);
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    video.style.transform = '';
+    player.videoUrl = null;
+    player.videoPath = null;
+    player.videoExt = null;
+    player.fallbackUrl = null;
+    player.usingFallback = false;
+    player._blackCheckDone = false;
+    player._blackAttempts = 0;
+    player._blackTimer = null;
+    player.rotation = 0;
+    player.element.classList.add('video-cell-empty');
+    player.element.querySelector('.loading').style.display = 'none';
+    const titleEl = player.element.querySelector('.cell-title');
+    const infoEl = player.element.querySelector('.cell-info');
+    titleEl.textContent = '';
+    titleEl.title = '';
+    infoEl.textContent = '';
+    infoEl.title = '';
+  }
+
   loadVideos(videos, loop, mute) {
+    // A video may only run in one cell: cells beyond the selected videos stay empty.
+    this.players.forEach((player, index) => {
+      if (index >= videos.length) this.clearPlayer(player);
+    });
+
     videos.forEach((videoData, index) => {
       setTimeout(() => {
         const player = this.players[index];
@@ -956,6 +998,7 @@ class VideoGridPlayer {
     const title = filePath.split(/[/\\]/).pop().replace(/\.[^/.]+$/, '');
     const sizeStr = this.formatFileSize(size);
 
+    cell.classList.remove('video-cell-empty');
     titleEl.textContent = title;
     titleEl.title = title;
     infoEl.textContent = sizeStr;
@@ -1035,6 +1078,24 @@ class VideoGridPlayer {
     const { grid } = this.config;
     const playingCount = this.players.filter(p => !p.video.paused).length;
     this.statusEl.textContent = `${grid.rows}x${grid.cols} | ${playingCount} playing`;
+  }
+
+  showMeta(text) {
+    this.metaTextEl.textContent = text;
+    this.metaModal.classList.add('visible');
+  }
+
+  hideMeta() {
+    this.metaModal.classList.remove('visible');
+  }
+
+  async copyMeta() {
+    try {
+      await navigator.clipboard.writeText(this.metaTextEl.textContent);
+      this.showToast('Metadata copied to clipboard');
+    } catch (err) {
+      this.showToast('Copy failed: ' + err.message);
+    }
   }
 
   showError(message) {

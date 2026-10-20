@@ -379,8 +379,9 @@
       margin: 0 4px;
     }
 
-    /* Error modal */
-    #error-modal {
+    /* Error / metadata modals */
+    #error-modal,
+    #meta-modal {
       position: fixed;
       top: 0;
       left: 0;
@@ -393,11 +394,13 @@
       z-index: 2000;
     }
 
-    #error-modal.visible {
+    #error-modal.visible,
+    #meta-modal.visible {
       display: flex;
     }
 
-    #error-modal .content {
+    #error-modal .content,
+    #meta-modal .content {
       background: #1a1a1a;
       border: 1px solid #444;
       border-radius: 8px;
@@ -416,13 +419,48 @@
       margin-bottom: 16px;
     }
 
-    #error-modal button {
+    #error-modal button,
+    #meta-modal button {
       background: #3a3a3a;
       border: 1px solid #555;
       color: #ddd;
       padding: 8px 24px;
       border-radius: 4px;
       cursor: pointer;
+    }
+
+    #meta-modal .content {
+      max-width: 680px;
+      width: calc(100% - 48px);
+      text-align: left;
+    }
+
+    #meta-modal h3 {
+      color: #fff;
+      margin-bottom: 12px;
+    }
+
+    #meta-text {
+      color: #ccc;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 12px;
+      margin-bottom: 16px;
+      max-height: 50vh;
+      overflow-y: auto;
+      user-select: text;
+    }
+
+    .meta-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
     }
 
     #toast {
@@ -724,6 +762,17 @@
       <h3>Error</h3>
       <p id="error-message">Something went wrong</p>
       <button id="error-ok">OK</button>
+    </div>
+  </div>
+
+  <div id="meta-modal">
+    <div class="content">
+      <h3>Video metadata</h3>
+      <pre id="meta-text"></pre>
+      <div class="meta-actions">
+        <button id="meta-copy">Copy</button>
+        <button id="meta-close">Close</button>
+      </div>
     </div>
   </div>
 

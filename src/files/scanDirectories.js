@@ -120,7 +120,8 @@ async function scanDirectories(directories) {
 }
 
 /**
- * Pick `count` videos for the grid. Repeats the pool when it is smaller.
+ * Pick up to `count` videos for the grid. Each video is used at most once,
+ * so when the pool is smaller than the grid the remaining cells stay empty.
  * @param {string[]} videos
  * @param {number} count
  * @param {boolean} shuffle
@@ -137,7 +138,7 @@ function selectVideos(videos, count, shuffle = true) {
     }
   }
 
-  return Array.from({ length: count }, (_, i) => pool[i % pool.length]);
+  return pool.slice(0, Math.min(count, pool.length));
 }
 
 module.exports = {
