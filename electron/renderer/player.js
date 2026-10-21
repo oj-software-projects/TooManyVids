@@ -443,6 +443,7 @@ class VideoGridPlayer {
         videoStarted: false,
         _startupStallLogged: false,
         _lastStallWarn: 0,
+        muted: Boolean(mute),
         rotation: 0
       });
     }
@@ -463,7 +464,8 @@ class VideoGridPlayer {
         <div class="cell-buttons">
           <button class="btn-next" title="Load random video">&#x23e9; Next</button>
           <button class="btn-pick" title="Pick from list">&#x2630; Pick</button>
-          <button class="btn-meta" title="Copy metadata to clipboard">Meta</button>
+          <button class="btn-meta" title="Show video metadata">Meta</button>
+          <button class="btn-audio" title="Toggle sound for this video">&#x1f507;</button>
           <button class="btn-delete" title="Delete video from disk">Del</button>
           <div class="btn-rotate-group">
             <button class="btn-rotate-left" title="Rotate left 90°">&#x21b6;</button>
@@ -491,6 +493,7 @@ class VideoGridPlayer {
     const btnNext = cell.querySelector('.btn-next');
     const btnPick = cell.querySelector('.btn-pick');
     const btnMeta = cell.querySelector('.btn-meta');
+    const btnAudio = cell.querySelector('.btn-audio');
     const btnDelete = cell.querySelector('.btn-delete');
     const btnRotateLeft = cell.querySelector('.btn-rotate-left');
     const btnRotateRight = cell.querySelector('.btn-rotate-right');
@@ -785,6 +788,16 @@ class VideoGridPlayer {
       }
     });
 
+    btnAudio.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const p = getPlayer();
+      if (!p) return;
+      p.muted = !p.video.muted;
+      p.video.muted = p.muted;
+      this.syncAudioIcon(p);
+      window.toomanyvids.log('Toggle cell sound', { index, muted: p.muted });
+    });
+
     btnDelete.addEventListener('click', async (e) => {
       e.stopPropagation();
       const p = getPlayer();
@@ -916,7 +929,7 @@ class VideoGridPlayer {
     const savedUrl = (player.usingFallback && player.fallbackUrl) || player.videoUrl || player.video.src;
     player.video.pause();
 
-    fullscreenVideo.muted = this.isMuted;
+    fullscreenVideo.muted = typeof player.muted === 'boolean' ? player.muted : this.isMuted;
     fullscreenVideo.loop = this.config?.loop || false;
     titleEl.textContent = player.element.querySelector('.cell-title').textContent;
     infoEl.textContent = player.element.querySelector('.cell-info').textContent;
@@ -1105,7 +1118,10 @@ class VideoGridPlayer {
 
     video.src = url;
     video.loop = loop;
-    video.muted = mute;
+    const cellMuted = typeof player.muted === 'boolean' ? player.muted : mute;
+    player.muted = cellMuted;
+    video.muted = cellMuted;
+    this.syncAudioIcon(player);
 
     video.play().then(() => {
       window.toomanyvids.debug('Autoplay started', { index: player.index, path: filePath });
@@ -1162,13 +1178,23 @@ class VideoGridPlayer {
     const btn = document.getElementById('btn-mute');
 
     this.players.forEach(player => {
+      player.muted = this.isMuted;
       player.video.muted = this.isMuted;
+      this.syncAudioIcon(player);
     });
 
     const fullscreenVideo = document.querySelector('#fullscreen-container video');
     if (fullscreenVideo) fullscreenVideo.muted = this.isMuted;
 
     btn.textContent = this.isMuted ? 'Unmute' : 'Mute';
+  }
+
+  syncAudioIcon(player) {
+    const btn = player.element.querySelector('.btn-audio');
+    if (!btn) return;
+    const muted = player.video.muted;
+    btn.textContent = muted ? '\u{1F507}' : '\u{1F50A}';
+    btn.title = muted ? 'Sound off - click to unmute this video' : 'Sound on - click to mute this video';
   }
 
   updateStatus() {
