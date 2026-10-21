@@ -315,6 +315,33 @@
       text-overflow: ellipsis;
     }
 
+    #fullscreen-container .fullscreen-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    #fullscreen-container .fullscreen-heading {
+      flex: 1;
+      min-width: 0;
+    }
+
+    #fullscreen-container .fullscreen-audio {
+      flex-shrink: 0;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.3);
+      color: #fff;
+      font-size: 18px;
+      line-height: 1;
+      padding: 6px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    #fullscreen-container .fullscreen-audio:hover {
+      background: rgba(255,255,255,0.25);
+    }
+
     #fullscreen-container .fullscreen-seek-container {
       display: flex;
       align-items: center;

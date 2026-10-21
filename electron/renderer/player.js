@@ -876,8 +876,13 @@ class VideoGridPlayer {
       fullscreenContainer.innerHTML = `
         <video playsinline muted preload="metadata"></video>
         <div class="fullscreen-overlay">
-          <div class="fullscreen-title"></div>
-          <div class="fullscreen-info"></div>
+          <div class="fullscreen-header">
+            <div class="fullscreen-heading">
+              <div class="fullscreen-title"></div>
+              <div class="fullscreen-info"></div>
+            </div>
+            <button class="fullscreen-audio" title="Toggle sound">&#x1f507;</button>
+          </div>
           <div class="fullscreen-seek-container">
             <input type="range" class="fullscreen-seek" min="0" max="100" value="0">
             <span class="fullscreen-time">0:00 / 0:00</span>
@@ -896,6 +901,20 @@ class VideoGridPlayer {
       });
 
       const createdVideo = fullscreenContainer.querySelector('video');
+      fullscreenContainer.querySelector('.fullscreen-audio').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const video = fullscreenContainer.querySelector('video');
+        video.muted = !video.muted;
+        const player = this.players[this.fullscreenPlayer];
+        if (player) {
+          player.muted = video.muted;
+          player.video.muted = video.muted;
+          this.syncAudioIcon(player);
+        }
+        this.syncFullscreenAudioIcon();
+        window.toomanyvids.log('Toggle fullscreen sound', { index: this.fullscreenPlayer, muted: video.muted });
+      });
+
       let clickTimer = null;
       fullscreenContainer.addEventListener('click', (e) => {
         if (e.target.closest('.fullscreen-overlay')) return;
@@ -931,6 +950,7 @@ class VideoGridPlayer {
 
     fullscreenVideo.muted = typeof player.muted === 'boolean' ? player.muted : this.isMuted;
     fullscreenVideo.loop = this.config?.loop || false;
+    this.syncFullscreenAudioIcon();
     titleEl.textContent = player.element.querySelector('.cell-title').textContent;
     infoEl.textContent = player.element.querySelector('.cell-info').textContent;
 
@@ -987,6 +1007,9 @@ class VideoGridPlayer {
 
       if (player) {
         player.video.currentTime = fullscreenVideo.currentTime;
+        player.muted = fullscreenVideo.muted;
+        player.video.muted = fullscreenVideo.muted;
+        this.syncAudioIcon(player);
         if (!this.isPaused) player.video.play().catch(() => {});
       }
 
@@ -1184,7 +1207,10 @@ class VideoGridPlayer {
     });
 
     const fullscreenVideo = document.querySelector('#fullscreen-container video');
-    if (fullscreenVideo) fullscreenVideo.muted = this.isMuted;
+    if (fullscreenVideo) {
+      fullscreenVideo.muted = this.isMuted;
+      this.syncFullscreenAudioIcon();
+    }
 
     btn.textContent = this.isMuted ? 'Unmute' : 'Mute';
   }
@@ -1195,6 +1221,15 @@ class VideoGridPlayer {
     const muted = player.video.muted;
     btn.textContent = muted ? '\u{1F507}' : '\u{1F50A}';
     btn.title = muted ? 'Sound off - click to unmute this video' : 'Sound on - click to mute this video';
+  }
+
+  syncFullscreenAudioIcon() {
+    const container = document.getElementById('fullscreen-container');
+    const btn = container?.querySelector('.fullscreen-audio');
+    const video = container?.querySelector('video');
+    if (!btn || !video) return;
+    btn.textContent = video.muted ? '\u{1F507}' : '\u{1F50A}';
+    btn.title = video.muted ? 'Sound off - click to unmute' : 'Sound on - click to mute';
   }
 
   updateStatus() {
