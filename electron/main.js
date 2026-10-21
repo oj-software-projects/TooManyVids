@@ -3,7 +3,7 @@
  * Single-window multi-video player
  */
 
-const { app, BrowserWindow, ipcMain, screen, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, shell } = require('electron');
 const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
@@ -539,6 +539,15 @@ function setupIpc() {
         }
       });
     });
+  });
+
+  ipcMain.handle('show-video-in-folder', (event, videoId) => {
+    if (!isTrustedSender(event)) return { error: 'Forbidden' };
+    const filePath = videoId && videoPathMap.get(videoId);
+    if (!filePath) return { error: 'Unknown video id' };
+    shell.showItemInFolder(filePath);
+    log.info('Reveal video in folder', { videoId, path: filePath });
+    return { ok: true };
   });
 
   ipcMain.handle('delete-video', async (event, videoId) => {

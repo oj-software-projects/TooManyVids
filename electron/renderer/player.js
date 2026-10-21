@@ -57,6 +57,7 @@ class VideoGridPlayer {
     this.errorModal = document.getElementById('error-modal');
     this.metaModal = document.getElementById('meta-modal');
     this.metaTextEl = document.getElementById('meta-text');
+    this.metaVideoId = null;
 
     this.dirs = [];
     this.folderCounts = new Map();
@@ -114,6 +115,7 @@ class VideoGridPlayer {
 
     document.getElementById('meta-close').addEventListener('click', () => this.hideMeta());
     document.getElementById('meta-copy').addEventListener('click', () => this.copyMeta());
+    document.getElementById('meta-reveal').addEventListener('click', () => this.revealMeta());
     this.metaModal.addEventListener('click', (e) => {
       if (e.target === this.metaModal) this.hideMeta();
     });
@@ -775,7 +777,7 @@ class VideoGridPlayer {
         if (meta.audioCodec) {
           lines.push(`Audio: ${meta.audioCodecLong || meta.audioCodec} ${meta.audioSampleRate}Hz ${meta.audioChannels}ch`);
         }
-        this.showMeta(lines.join('\n'));
+        this.showMeta(lines.join('\n'), videoId);
         window.toomanyvids.log('Meta shown', { index, path: meta.path });
       } catch (err) {
         this.showToast('Failed to get metadata');
@@ -1176,13 +1178,25 @@ class VideoGridPlayer {
     this.statusEl.textContent = `${grid.rows}x${grid.cols} | ${playingCount} playing`;
   }
 
-  showMeta(text) {
+  showMeta(text, videoId = null) {
     this.metaTextEl.textContent = text;
+    this.metaVideoId = videoId;
     this.metaModal.classList.add('visible');
   }
 
   hideMeta() {
     this.metaModal.classList.remove('visible');
+    this.metaVideoId = null;
+  }
+
+  async revealMeta() {
+    if (!this.metaVideoId) return;
+    try {
+      const result = await window.toomanyvids.showInFolder(this.metaVideoId);
+      if (result?.error) this.showToast('Cannot open folder: ' + result.error);
+    } catch (err) {
+      this.showToast('Cannot open folder: ' + err.message);
+    }
   }
 
   async copyMeta() {
