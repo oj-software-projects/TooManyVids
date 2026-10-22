@@ -247,6 +247,7 @@ Without an app icon, electron-builder falls back to the default Electron icon.
 - Check file permissions
 - Try running with `--dev` flag to see console errors
 - A cell that cannot play a file shows the reason and switches to another unused video after 10 seconds; if no unused video is left it stays with the message
+- Stuck playback is detected too: no progress for 10 s (or no first frame within 12 s / 30 s for transcodes) is treated as a failure and follows the same countdown; if the stream recovers, the countdown is cancelled
 - Next/Pick never duplicate a video that is already playing elsewhere; on a completely full wall Next reports `All videos are already playing`
 
 ### "Video stalled" in the log

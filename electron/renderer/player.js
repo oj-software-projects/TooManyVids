@@ -78,6 +78,7 @@ class VideoGridPlayer {
     this.metaCache = new Map();
     this.lobbyStatusEl = document.getElementById('lobby-status');
     this.hudTimer = null;
+    this.stallInterval = setInterval(() => this.checkStalls(), 2000);
 
     this.setupEventListeners();
     this.setupLobby();
@@ -1135,6 +1136,8 @@ class VideoGridPlayer {
     clearTimeout(player._loadWatchdog);
     player._advanceTimer = null;
     player._loadWatchdog = null;
+    player._lastStallTime = null;
+    player._stuckSeconds = 0;
     player.video._durationHint = null;
     player.video._offset = 0;
   }
@@ -1179,8 +1182,39 @@ class VideoGridPlayer {
     player._advanceTimer = null;
     clearTimeout(player._loadWatchdog);
     player._loadWatchdog = null;
+    player._stallAdvance = false;
     const statusEl = player.element.querySelector('.cell-status');
     if (statusEl) statusEl.textContent = '';
+  }
+
+  checkStalls() {
+    if (document.body.classList.contains('mode-lobby')) return;
+
+    for (const player of this.players) {
+      const video = player.video;
+      if (!player.videoUrl || video.paused || video.ended || video.seeking) {
+        player._lastStallTime = null;
+        player._stuckSeconds = 0;
+        continue;
+      }
+      if (video.readyState < 3) continue; // pre-data stalls are covered by the load watchdog
+
+      if (player._lastStallTime === null || video.currentTime !== player._lastStallTime) {
+        player._lastStallTime = video.currentTime;
+        player._stuckSeconds = 0;
+        player.element.querySelector('.loading').style.display = 'none';
+        if (player._stallAdvance) this.cancelAutoAdvance(player);
+        continue;
+      }
+
+      if (player._advanceTimer) continue; // countdown already running
+      player._stuckSeconds += 2;
+      if (player._stuckSeconds >= 10) {
+        window.toomanyvids.warn('Playback stalled', { index: player.index, path: player.videoPath, at: video.currentTime });
+        player._stuckSeconds = 0;
+        this.startAutoAdvance(player, 'Playback stalled');
+      }
+    }
   }
 
   armLoadWatchdog(player) {
@@ -1202,6 +1236,7 @@ class VideoGridPlayer {
     clearTimeout(player._loadWatchdog);
     player._loadWatchdog = null;
     clearTimeout(player._advanceTimer);
+    player._stallAdvance = reason === 'Playback stalled';
 
     const statusEl = player.element.querySelector('.cell-status');
     const loadingEl = player.element.querySelector('.loading');
