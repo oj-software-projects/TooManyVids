@@ -72,13 +72,10 @@ class VideoGridPlayer {
     this.shortcutsEl = document.getElementById('shortcuts');
     this.errorMessage = document.getElementById('error-message');
     this.errorModal = document.getElementById('error-modal');
-    this.metaModal = document.getElementById('meta-modal');
-    this.metaTextEl = document.getElementById('meta-text');
-    this.metaVideoId = null;
-
     this.dirs = [];
     this.folderCounts = new Map();
     this.durationHints = new Map();
+    this.metaCache = new Map();
     this.lobbyStatusEl = document.getElementById('lobby-status');
     this.hudTimer = null;
 
@@ -104,9 +101,7 @@ class VideoGridPlayer {
           if (this.fullscreenPlayer === null) window.close();
           break;
         case 'escape':
-          if (this.metaModal.classList.contains('visible')) {
-            this.hideMeta();
-          } else if (this.fullscreenPlayer !== null) {
+          if (this.fullscreenPlayer !== null) {
             this.exitFullscreen();
           } else if (document.body.classList.contains('mode-wall')) {
             this.showLobby();
@@ -129,13 +124,6 @@ class VideoGridPlayer {
 
     document.getElementById('error-ok').addEventListener('click', () => {
       this.errorModal.classList.remove('visible');
-    });
-
-    document.getElementById('meta-close').addEventListener('click', () => this.hideMeta());
-    document.getElementById('meta-copy').addEventListener('click', () => this.copyMeta());
-    document.getElementById('meta-reveal').addEventListener('click', () => this.revealMeta());
-    this.metaModal.addEventListener('click', (e) => {
-      if (e.target === this.metaModal) this.hideMeta();
     });
 
     document.getElementById('btn-setup').addEventListener('click', () => this.showLobby());
@@ -479,11 +467,12 @@ class VideoGridPlayer {
       <div class="cell-overlay">
         <div class="cell-title"></div>
         <div class="cell-info"></div>
+        <pre class="cell-meta"></pre>
         <div class="cell-buttons">
           <button class="btn-next" title="Load random video">&#x23e9; Next</button>
           <button class="btn-replay" title="Reload and play this video from the start">&#x21bb;</button>
           <button class="btn-pick" title="Pick from list">&#x2630; Pick</button>
-          <button class="btn-meta" title="Show video metadata">Meta</button>
+          <button class="btn-meta" title="Open the containing folder in your file browser">Folder</button>
           <button class="btn-audio" title="Toggle sound for this video">&#x1f507;</button>
           <button class="btn-delete" title="Delete video from disk">Del</button>
           <div class="btn-rotate-group">
@@ -739,6 +728,10 @@ class VideoGridPlayer {
 
     cell.addEventListener('mouseenter', () => {
       cellOverlay.classList.add('visible');
+      titleEl.style.opacity = '1';
+      infoEl.style.opacity = '1';
+      cell.querySelector('.cell-meta').scrollTop = 0;
+      this.ensureCellMeta(getPlayer());
     });
 
     cell.addEventListener('mouseleave', () => {
@@ -784,39 +777,18 @@ class VideoGridPlayer {
 
     btnMeta.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const p = this.players[index];
+      const p = getPlayer();
       if (!p || !p.videoUrl) {
         this.showToast('No video loaded yet');
         return;
       }
       const idMatch = p.videoUrl.match(/id=([^&]+)/);
       if (!idMatch) return;
-      const videoId = idMatch[1];
       try {
-        const meta = await window.toomanyvids.getVideoMeta(videoId);
-        if (meta.error) {
-          this.showToast('Meta error: ' + meta.error);
-          return;
-        }
-        const lines = [];
-        lines.push(`File: ${meta.path}`);
-        if (meta.container) lines.push(`Container: ${meta.container}`);
-        if (meta.duration) lines.push(`Duration: ${Math.floor(meta.duration / 60)}:${Math.floor(meta.duration % 60).toString().padStart(2, '0')}`);
-        if (meta.size) lines.push(`Size: ${this.formatFileSize(parseInt(meta.size))}`);
-        if (meta.bitrate) lines.push(`Bitrate: ${Math.round(parseInt(meta.bitrate) / 1000)} kbps`);
-        if (meta.videoCodec) {
-          lines.push(`Video: ${meta.videoCodecLong || meta.videoCodec} ${meta.width}x${meta.height} ${meta.fps} ${meta.pixelFormat || ''}`.trim());
-          if (meta.profile) lines.push(`Video Profile: ${meta.profile}`);
-          if (meta.rotation) lines.push(`Rotation: ${meta.rotation}°`);
-        }
-        if (meta.audioCodec) {
-          lines.push(`Audio: ${meta.audioCodecLong || meta.audioCodec} ${meta.audioSampleRate}Hz ${meta.audioChannels}ch`);
-        }
-        this.showMeta(lines.join('\n'), videoId);
-        window.toomanyvids.log('Meta shown', { index, path: meta.path });
+        const result = await window.toomanyvids.openVideoFolder(idMatch[1]);
+        if (result?.error) this.showToast('Cannot open folder: ' + result.error);
       } catch (err) {
-        this.showToast('Failed to get metadata');
-        window.toomanyvids.warn('Meta failed', { index, error: err.message });
+        this.showToast('Cannot open folder: ' + err.message);
       }
     });
 
@@ -1119,6 +1091,7 @@ class VideoGridPlayer {
     titleEl.title = '';
     infoEl.textContent = '';
     infoEl.title = '';
+    player.element.querySelector('.cell-meta').textContent = '';
   }
 
   loadVideos(videos, loop, mute) {
@@ -1156,6 +1129,7 @@ class VideoGridPlayer {
     player.durationHint = null;
     player._hintLoading = false;
     player.playbackOffset = 0;
+    player._metaLoading = false;
     player.video._durationHint = null;
     player.video._offset = 0;
   }
@@ -1238,6 +1212,7 @@ class VideoGridPlayer {
     const sizeStr = this.formatFileSize(size);
 
     cell.classList.remove('video-cell-empty');
+    cell.querySelector('.cell-meta').textContent = '';
     titleEl.textContent = title;
     titleEl.title = title;
     infoEl.textContent = sizeStr;
@@ -1357,33 +1332,52 @@ class VideoGridPlayer {
     this.statusEl.textContent = `${grid.rows}x${grid.cols} | ${playingCount} playing`;
   }
 
-  showMeta(text, videoId = null) {
-    this.metaTextEl.textContent = text;
-    this.metaVideoId = videoId;
-    this.metaModal.classList.add('visible');
-  }
-
-  hideMeta() {
-    this.metaModal.classList.remove('visible');
-    this.metaVideoId = null;
-  }
-
-  async revealMeta() {
-    if (!this.metaVideoId) return;
-    try {
-      const result = await window.toomanyvids.showInFolder(this.metaVideoId);
-      if (result?.error) this.showToast('Cannot open folder: ' + result.error);
-    } catch (err) {
-      this.showToast('Cannot open folder: ' + err.message);
+  formatMetaText(meta) {
+    const lines = [];
+    lines.push(`File: ${meta.path}`);
+    if (meta.container) lines.push(`Container: ${meta.container}`);
+    if (meta.duration) lines.push(`Duration: ${formatTime(Number(meta.duration))}`);
+    if (meta.size) lines.push(`Size: ${this.formatFileSize(parseInt(meta.size, 10))}`);
+    if (meta.bitrate) lines.push(`Bitrate: ${Math.round(parseInt(meta.bitrate, 10) / 1000)} kbps`);
+    if (meta.videoCodec) {
+      lines.push(`Video: ${meta.videoCodecLong || meta.videoCodec} ${meta.width}x${meta.height} ${meta.fps} ${meta.pixelFormat || ''}`.trim());
+      if (meta.profile) lines.push(`Profile: ${meta.profile}`);
+      if (meta.rotation) lines.push(`Rotation: ${meta.rotation}\u00b0`);
     }
+    if (meta.audioCodec) {
+      lines.push(`Audio: ${meta.audioCodecLong || meta.audioCodec} ${meta.audioSampleRate}Hz ${meta.audioChannels}ch`);
+    }
+    return lines.join('\n');
   }
 
-  async copyMeta() {
+  async ensureCellMeta(player) {
+    if (!player || !player.videoUrl) return;
+    const idMatch = player.videoUrl.match(/id=([^&]+)/);
+    if (!idMatch) return;
+    const id = idMatch[1];
+    const metaEl = player.element.querySelector('.cell-meta');
+    if (this.metaCache.has(id)) {
+      metaEl.textContent = this.metaCache.get(id);
+      return;
+    }
+    if (player._metaLoading) return;
+    player._metaLoading = true;
+
     try {
-      await navigator.clipboard.writeText(this.metaTextEl.textContent);
-      this.showToast('Metadata copied to clipboard');
+      const meta = await window.toomanyvids.getVideoMeta(id);
+      if (meta?.error) {
+        metaEl.textContent = 'Metadata unavailable (' + meta.error + ')';
+        return;
+      }
+      const text = this.formatMetaText(meta);
+      this.metaCache.set(id, text);
+      const current = player.videoUrl?.match(/id=([^&]+)/)?.[1];
+      if (current === id) metaEl.textContent = text;
     } catch (err) {
-      this.showToast('Copy failed: ' + err.message);
+      metaEl.textContent = 'Metadata unavailable';
+      window.toomanyvids.warn('Meta failed', { index: player.index, error: err.message });
+    } finally {
+      player._metaLoading = false;
     }
   }
 

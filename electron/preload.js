@@ -48,8 +48,8 @@ contextBridge.exposeInMainWorld('toomanyvids', {
     return ipcRenderer.invoke('get-video-meta', videoId);
   },
 
-  showInFolder: (videoId) => {
-    return ipcRenderer.invoke('show-video-in-folder', videoId);
+  openVideoFolder: (videoId) => {
+    return ipcRenderer.invoke('open-video-folder', videoId);
   },
 
   deleteVideo: (videoId) => {

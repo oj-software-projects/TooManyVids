@@ -541,12 +541,17 @@ function setupIpc() {
     });
   });
 
-  ipcMain.handle('show-video-in-folder', (event, videoId) => {
+  ipcMain.handle('open-video-folder', async (event, videoId) => {
     if (!isTrustedSender(event)) return { error: 'Forbidden' };
     const filePath = videoId && videoPathMap.get(videoId);
     if (!filePath) return { error: 'Unknown video id' };
-    shell.showItemInFolder(filePath);
-    log.info('Reveal video in folder', { videoId, path: filePath });
+    const folder = path.dirname(filePath);
+    const error = await shell.openPath(folder);
+    if (error) {
+      log.warn('Cannot open video folder', { videoId, folder, error });
+      return { error };
+    }
+    log.info('Open video folder', { videoId, folder });
     return { ok: true };
   });
 
