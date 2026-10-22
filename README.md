@@ -12,6 +12,7 @@ A single-window multi-video player with configurable grid layout. Built with Ele
 - **Directory Scanning**: Recursively scan multiple directories for videos
 - **Random Selection**: Shuffle and randomly select videos
 - **Per-tile Controls**: Next/Pick, reload the current video from the start, seek, rotate, per-video sound toggle (also in fullscreen), metadata on hover (path, codecs, resolution, duration, bitrate), open the containing folder in the file browser, delete from disk (with confirmation)
+- **Error Handling**: A file that fails to play shows the error and loads another unused video after a 10 s countdown; no video ever plays in two cells at once
 - **Keyboard Controls**: Intuitive shortcuts for common actions; toolbar auto-hides while playing
 - **Cross-Platform**: Works on macOS, Windows, and Linux
 
@@ -245,6 +246,8 @@ Without an app icon, electron-builder falls back to the default Electron icon.
 - Ensure video files are in supported formats
 - Check file permissions
 - Try running with `--dev` flag to see console errors
+- A cell that cannot play a file shows the reason and switches to another unused video after 10 seconds; if no unused video is left it stays with the message
+- Next/Pick never duplicate a video that is already playing elsewhere; on a completely full wall Next reports `All videos are already playing`
 
 ### "Video stalled" in the log
 

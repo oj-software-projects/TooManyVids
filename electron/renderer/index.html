@@ -164,6 +164,25 @@
       display: none;
     }
 
+    .video-cell .cell-status {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 6;
+      color: #ff9e9e;
+      font-size: 12px;
+      line-height: 1.5;
+      text-align: center;
+      white-space: pre-line;
+      max-width: 90%;
+      pointer-events: none;
+    }
+
+    .video-cell .cell-status:empty {
+      display: none;
+    }
+
     .video-cell .cell-meta::-webkit-scrollbar {
       width: 4px;
     }

@@ -379,7 +379,10 @@ class VideoGridPlayer {
 
   showLobby() {
     if (this.fullscreenPlayer !== null) this.exitFullscreen();
-    this.players.forEach((p) => p.video.pause());
+    this.players.forEach((p) => {
+      p.video.pause();
+      this.cancelAutoAdvance(p);
+    });
     clearTimeout(this.hudTimer);
     document.body.classList.remove('mode-wall', 'hud-hidden');
     document.body.classList.add('mode-lobby');
@@ -464,6 +467,7 @@ class VideoGridPlayer {
     cell.innerHTML = `
       <video playsinline autoplay muted preload="metadata"></video>
       <div class="loading">Loading...</div>
+      <div class="cell-status"></div>
       <div class="cell-overlay">
         <div class="cell-title"></div>
         <div class="cell-info"></div>
@@ -517,6 +521,8 @@ class VideoGridPlayer {
     });
 
     video.addEventListener('loadeddata', () => {
+      const p = getPlayer();
+      if (p) clearTimeout(p._loadWatchdog);
       loading.style.display = 'none';
       this.updateStatus();
     });
@@ -560,6 +566,7 @@ class VideoGridPlayer {
         video.muted = wasMuted;
         video.loop = wasLoop;
         this.ensureDurationHint(p);
+        this.armLoadWatchdog(p);
         loading.style.display = 'block';
         video.play().catch(() => {
           loading.style.display = 'none';
@@ -586,6 +593,7 @@ class VideoGridPlayer {
       const p = getPlayer();
       if (!p) return;
       clearTimeout(p._blackTimer);
+      clearTimeout(p._loadWatchdog);
       p._blackTimer = null;
       loading.style.display = 'none';
       const ext = (p.videoExt || '').replace('.', '').toLowerCase();
@@ -600,33 +608,21 @@ class VideoGridPlayer {
         p._blackCheckDone = true;
         video.src = p.fallbackUrl;
         this.ensureDurationHint(p);
+        this.armLoadWatchdog(p);
         loading.style.display = 'block';
         video.play().then(() => {
           window.toomanyvids.log('Transcode playback started', { index });
         }).catch(() => {
-          loading.style.display = 'none';
-          titleEl.textContent = 'Cannot play: .' + ext.toUpperCase();
-          titleEl.style.opacity = '1';
-          infoEl.style.opacity = '1';
+          this.startAutoAdvance(getPlayer(), 'Cannot play .' + ext.toUpperCase());
         });
         return;
       }
 
       const unsupported = ['mkv', 'avi', 'flv', 'wmv', 'hevc', 'h265'];
-      if (unsupported.includes(ext)) {
-        titleEl.textContent = 'Codec? : .' + ext.toUpperCase();
-      } else {
-        titleEl.textContent = 'Error: .' + ext.toUpperCase() + ' (code ' + errCode + ')';
-      }
-      titleEl.style.opacity = '1';
-      infoEl.style.opacity = '1';
-
-      cell.onclick = () => {
-        video.play().catch(() => {});
-        cell.onclick = null;
-        titleEl.style.opacity = '0';
-        infoEl.style.opacity = '0';
-      };
+      const reason = unsupported.includes(ext)
+        ? 'Codec not supported: .' + ext.toUpperCase()
+        : 'Cannot play .' + ext.toUpperCase() + ' (code ' + errCode + ')';
+      this.startAutoAdvance(getPlayer(), reason);
     });
 
     video.addEventListener('stalled', () => {
@@ -651,7 +647,10 @@ class VideoGridPlayer {
 
     video.addEventListener('playing', () => {
       const p = getPlayer();
-      if (p) p.videoStarted = true;
+      if (p) {
+        p.videoStarted = true;
+        clearTimeout(p._loadWatchdog);
+      }
       loading.style.display = 'none';
       if (p && !p._blackCheckDone && !p.usingFallback && p.fallbackUrl && !p._blackTimer) {
         p._blackTimer = setTimeout(attemptBlackDetect, 1500);
@@ -746,6 +745,7 @@ class VideoGridPlayer {
         window.toomanyvids.log('Next video', { index, path: next.path });
         this.loadSingleVideo(this.players[index], next, this.config?.loop, this.config?.mute);
       } else {
+        this.showToast('All videos are already playing');
         window.toomanyvids.warn('No available video for Next', { index });
       }
     });
@@ -1064,6 +1064,7 @@ class VideoGridPlayer {
   }
 
   clearPlayer(player) {
+    this.cancelAutoAdvance(player);
     const video = player.video;
     clearTimeout(player._blackTimer);
     video.pause();
@@ -1130,6 +1131,10 @@ class VideoGridPlayer {
     player._hintLoading = false;
     player.playbackOffset = 0;
     player._metaLoading = false;
+    clearTimeout(player._advanceTimer);
+    clearTimeout(player._loadWatchdog);
+    player._advanceTimer = null;
+    player._loadWatchdog = null;
     player.video._durationHint = null;
     player.video._offset = 0;
   }
@@ -1169,6 +1174,64 @@ class VideoGridPlayer {
     }
   }
 
+  cancelAutoAdvance(player) {
+    clearTimeout(player._advanceTimer);
+    player._advanceTimer = null;
+    clearTimeout(player._loadWatchdog);
+    player._loadWatchdog = null;
+    const statusEl = player.element.querySelector('.cell-status');
+    if (statusEl) statusEl.textContent = '';
+  }
+
+  armLoadWatchdog(player) {
+    clearTimeout(player._loadWatchdog);
+    if (!player.videoUrl) return;
+    // Transcodes can wait for a slot; give them more time before giving up.
+    const delay = player.mode === 'transcode' ? 30000 : 12000;
+    player._loadWatchdog = setTimeout(() => {
+      player._loadWatchdog = null;
+      if (!player.videoUrl) return;
+      if (player.video.readyState >= 2 || player.videoStarted) return;
+      window.toomanyvids.warn('Load timed out', { index: player.index, path: player.videoPath, mode: player.mode });
+      this.startAutoAdvance(player, 'Loading timed out');
+    }, delay);
+  }
+
+  startAutoAdvance(player, reason) {
+    if (!player) return;
+    clearTimeout(player._loadWatchdog);
+    player._loadWatchdog = null;
+    clearTimeout(player._advanceTimer);
+
+    const statusEl = player.element.querySelector('.cell-status');
+    const loadingEl = player.element.querySelector('.loading');
+    if (loadingEl) loadingEl.style.display = 'none';
+    let remaining = 10;
+
+    const tick = () => {
+      player._advanceTimer = null;
+      if (!player.videoUrl) return;
+
+      const candidates = this.getAvailableVideos(player.index);
+      if (candidates.length === 0) {
+        statusEl.textContent = `${reason}\nNo other video available`;
+        return;
+      }
+
+      statusEl.textContent = `${reason}\nNext video in ${remaining}s`;
+      if (remaining <= 0) {
+        const next = candidates[Math.floor(Math.random() * candidates.length)];
+        window.toomanyvids.log('Auto-advance after error', { index: player.index, reason, next: next.path });
+        this.loadSingleVideo(player, next, this.config?.loop, this.config?.mute);
+        return;
+      }
+      remaining--;
+      player._advanceTimer = setTimeout(tick, 1000);
+    };
+
+    tick();
+  }
+
   syncSeekUi(player) {
     const video = player.video;
     const duration = this.effectiveDuration(player);
@@ -1187,11 +1250,7 @@ class VideoGridPlayer {
   getAvailableVideos(excludeIndex) {
     const activePaths = this.getActivePaths();
     const excluded = this.players[excludeIndex]?.videoPath;
-    const available = this.videoPool.filter(v => v.path !== excluded && !activePaths.has(v.path));
-    if (available.length === 0) {
-      return this.videoPool.filter(v => v.path !== excluded);
-    }
-    return available;
+    return this.videoPool.filter(v => v.path !== excluded && !activePaths.has(v.path));
   }
 
   getAvailableVideo(excludeIndex) {
@@ -1213,6 +1272,7 @@ class VideoGridPlayer {
 
     cell.classList.remove('video-cell-empty');
     cell.querySelector('.cell-meta').textContent = '';
+    cell.querySelector('.cell-status').textContent = '';
     titleEl.textContent = title;
     titleEl.title = title;
     infoEl.textContent = sizeStr;
@@ -1238,10 +1298,13 @@ class VideoGridPlayer {
     player.muted = cellMuted;
     video.muted = cellMuted;
     this.syncAudioIcon(player);
+    this.armLoadWatchdog(player);
 
     video.play().then(() => {
       window.toomanyvids.debug('Autoplay started', { index: player.index, path: filePath });
     }).catch((err) => {
+      clearTimeout(player._loadWatchdog);
+      player._loadWatchdog = null;
       window.toomanyvids.warn('Autoplay prevented', { index: player.index, path: filePath, error: err.name });
       loading.style.display = 'none';
       titleEl.textContent = 'Click to play: ' + title;
