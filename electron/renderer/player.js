@@ -10,6 +10,20 @@ function formatTime(seconds) {
   return `${mins}:${secs}`;
 }
 
+// Fragmented MP4 streams (remux/transcode) report a duration that grows with
+// each received fragment. ffprobe's duration is authoritative; use it if set.
+function durationOf(video) {
+  const hint = video._durationHint;
+  if (Number.isFinite(hint) && hint > 0) return hint;
+  return video.duration;
+}
+
+// ffmpeg restarts a seeked pipe at timestamp 0, so absolute position is
+// currentTime plus the offset the stream was started at.
+function positionOf(video) {
+  return video.currentTime + (Number.isFinite(video._offset) ? video._offset : 0);
+}
+
 function bindSeekControls(video, seekBar, timeDisplay, onSeek) {
   let isSeeking = false;
   let seekTarget = null;
@@ -29,15 +43,18 @@ function bindSeekControls(video, seekBar, timeDisplay, onSeek) {
   });
 
   seekBar.addEventListener('input', (e) => {
-    if (!video.duration) return;
-    seekTarget = (e.target.value / 100) * video.duration;
-    timeDisplay.textContent = `${formatTime(seekTarget)} / ${formatTime(video.duration)}`;
+    const duration = durationOf(video);
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    seekTarget = (e.target.value / 100) * duration;
+    timeDisplay.textContent = `${formatTime(seekTarget)} / ${formatTime(duration)}`;
   });
 
   video.addEventListener('timeupdate', () => {
-    if (isSeeking || !video.duration) return;
-    seekBar.value = (video.currentTime / video.duration) * 100;
-    timeDisplay.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
+    const duration = durationOf(video);
+    if (isSeeking || !Number.isFinite(duration) || duration <= 0) return;
+    const position = positionOf(video);
+    seekBar.value = Math.min(100, (position / duration) * 100);
+    timeDisplay.textContent = `${formatTime(position)} / ${formatTime(duration)}`;
   });
 }
 
@@ -61,6 +78,7 @@ class VideoGridPlayer {
 
     this.dirs = [];
     this.folderCounts = new Map();
+    this.durationHints = new Map();
     this.lobbyStatusEl = document.getElementById('lobby-status');
     this.hudTimer = null;
 
@@ -463,6 +481,7 @@ class VideoGridPlayer {
         <div class="cell-info"></div>
         <div class="cell-buttons">
           <button class="btn-next" title="Load random video">&#x23e9; Next</button>
+          <button class="btn-replay" title="Reload and play this video from the start">&#x21bb;</button>
           <button class="btn-pick" title="Pick from list">&#x2630; Pick</button>
           <button class="btn-meta" title="Show video metadata">Meta</button>
           <button class="btn-audio" title="Toggle sound for this video">&#x1f507;</button>
@@ -491,6 +510,7 @@ class VideoGridPlayer {
     const titleEl = cell.querySelector('.cell-title');
     const infoEl = cell.querySelector('.cell-info');
     const btnNext = cell.querySelector('.btn-next');
+    const btnReplay = cell.querySelector('.btn-replay');
     const btnPick = cell.querySelector('.btn-pick');
     const btnMeta = cell.querySelector('.btn-meta');
     const btnAudio = cell.querySelector('.btn-audio');
@@ -498,6 +518,14 @@ class VideoGridPlayer {
     const btnRotateLeft = cell.querySelector('.btn-rotate-left');
     const btnRotateRight = cell.querySelector('.btn-rotate-right');
     const pickList = cell.querySelector('.pick-list');
+
+    video.addEventListener('loadedmetadata', () => {
+      const p = getPlayer();
+      if (!p) return;
+      if (p.mode !== 'direct' || !Number.isFinite(video.duration)) {
+        this.ensureDurationHint(p);
+      }
+    });
 
     video.addEventListener('loadeddata', () => {
       loading.style.display = 'none';
@@ -542,6 +570,7 @@ class VideoGridPlayer {
         video.src = p.fallbackUrl;
         video.muted = wasMuted;
         video.loop = wasLoop;
+        this.ensureDurationHint(p);
         loading.style.display = 'block';
         video.play().catch(() => {
           loading.style.display = 'none';
@@ -581,6 +610,7 @@ class VideoGridPlayer {
         p.usingFallback = true;
         p._blackCheckDone = true;
         video.src = p.fallbackUrl;
+        this.ensureDurationHint(p);
         loading.style.display = 'block';
         video.play().then(() => {
           window.toomanyvids.log('Transcode playback started', { index });
@@ -655,6 +685,8 @@ class VideoGridPlayer {
       const wasLoop = video.loop;
       p.videoStarted = false;
       p._startupStallLogged = false;
+      p.playbackOffset = targetTime;
+      video._offset = targetTime;
       video.src = baseUrl + sep + 't=' + Math.floor(targetTime);
       video.muted = wasMuted;
       video.loop = wasLoop;
@@ -786,6 +818,25 @@ class VideoGridPlayer {
         this.showToast('Failed to get metadata');
         window.toomanyvids.warn('Meta failed', { index, error: err.message });
       }
+    });
+
+    btnReplay.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const p = getPlayer();
+      if (!p || !p.videoUrl) {
+        this.showToast('No video loaded yet');
+        return;
+      }
+      const usingFallback = p.usingFallback && p.fallbackUrl;
+      window.toomanyvids.log('Replay video', { index, path: p.videoPath, fallback: Boolean(usingFallback) });
+      this.loadSingleVideo(p, {
+        url: usingFallback ? p.fallbackUrl : p.videoUrl,
+        fallbackUrl: usingFallback ? null : p.fallbackUrl,
+        path: p.videoPath,
+        size: p.videoSize,
+        ext: p.videoExt,
+        mode: p.mode
+      }, this.config?.loop, this.config?.mute);
     });
 
     btnAudio.addEventListener('click', (e) => {
@@ -951,6 +1002,17 @@ class VideoGridPlayer {
     fullscreenVideo.muted = typeof player.muted === 'boolean' ? player.muted : this.isMuted;
     fullscreenVideo.loop = this.config?.loop || false;
     this.syncFullscreenAudioIcon();
+
+    const fsDuration = this.effectiveDuration(player);
+    fullscreenVideo._durationHint = Number.isFinite(fsDuration) && fsDuration > 0 ? fsDuration : null;
+    fullscreenVideo._offset = player.playbackOffset || 0;
+    const fsSeek = fullscreenContainer.querySelector('.fullscreen-seek');
+    const fsTime = fullscreenContainer.querySelector('.fullscreen-time');
+    if (fullscreenVideo._durationHint) {
+      const fsPosition = savedTime + fullscreenVideo._offset;
+      fsSeek.value = Math.min(100, (fsPosition / fsDuration) * 100);
+      fsTime.textContent = `${formatTime(fsPosition)} / ${formatTime(fsDuration)}`;
+    }
     titleEl.textContent = player.element.querySelector('.cell-title').textContent;
     infoEl.textContent = player.element.querySelector('.cell-info').textContent;
 
@@ -1018,6 +1080,8 @@ class VideoGridPlayer {
       fullscreenVideo.pause();
       fullscreenVideo.removeAttribute('src');
       fullscreenVideo.load();
+      fullscreenVideo._durationHint = null;
+      fullscreenVideo._offset = 0;
       fullscreenVideo.style.transform = '';
       fullscreenContainer.style.display = 'none';
     }
@@ -1044,6 +1108,8 @@ class VideoGridPlayer {
     player._blackTimer = null;
     player.videoStarted = false;
     player._startupStallLogged = false;
+    player.playbackOffset = 0;
+    video._offset = 0;
     player.rotation = 0;
     player.element.classList.add('video-cell-empty');
     player.element.querySelector('.loading').style.display = 'none';
@@ -1087,6 +1153,57 @@ class VideoGridPlayer {
     player.videoStarted = false;
     player._startupStallLogged = false;
     player._lastStallWarn = 0;
+    player.durationHint = null;
+    player._hintLoading = false;
+    player.playbackOffset = 0;
+    player.video._durationHint = null;
+    player.video._offset = 0;
+  }
+
+  effectiveDuration(player) {
+    const hint = player.durationHint;
+    if (Number.isFinite(hint) && hint > 0) return hint;
+    return player.video.duration;
+  }
+
+  async ensureDurationHint(player) {
+    if (player.durationHint || player._hintLoading || !player.videoUrl) return;
+    player._hintLoading = true;
+    const url = player.videoUrl;
+
+    try {
+      const idMatch = url.match(/id=([^&]+)/);
+      if (!idMatch) return;
+      const id = idMatch[1];
+
+      let duration = this.durationHints.get(id);
+      if (!duration) {
+        const meta = await window.toomanyvids.getVideoMeta(id);
+        duration = Number(meta?.duration);
+        if (!Number.isFinite(duration) || duration <= 0) return;
+        this.durationHints.set(id, duration);
+      }
+
+      if (player.videoUrl !== url) return; // cell moved on while probing
+      player.durationHint = duration;
+      player.video._durationHint = duration;
+      this.syncSeekUi(player);
+    } catch (err) {
+      window.toomanyvids.warn('Duration probe failed', { index: player.index, error: err.message });
+    } finally {
+      player._hintLoading = false;
+    }
+  }
+
+  syncSeekUi(player) {
+    const video = player.video;
+    const duration = this.effectiveDuration(player);
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    const seekBar = player.element.querySelector('.seek-bar');
+    const timeDisplay = player.element.querySelector('.time-display');
+    const position = positionOf(video);
+    seekBar.value = Math.min(100, (position / duration) * 100);
+    timeDisplay.textContent = `${formatTime(position)} / ${formatTime(duration)}`;
   }
 
   getActivePaths() {
@@ -1138,6 +1255,7 @@ class VideoGridPlayer {
     player.fallbackUrl = fallbackUrl || null;
     player.videoExt = ext || '';
     player.mode = mode || 'direct';
+    if (player.mode !== 'direct') this.ensureDurationHint(player);
 
     video.src = url;
     video.loop = loop;
